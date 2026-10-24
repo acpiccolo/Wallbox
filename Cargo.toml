@@ -1,0 +1,12 @@
+[package]
+name = "evcc-protocol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
