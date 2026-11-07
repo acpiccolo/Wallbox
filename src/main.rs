@@ -1,9 +1,9 @@
+use abl_evcc_lib::protocol::*;
 use clap::{Parser, Subcommand, ValueEnum};
-use evcc_protocol::protocol::*;
 
-/// EVCC2/3 Modbus-ASCII Protocol CLI Tool
+/// ABL EVCC2/3 Wallbox Modbus-ASCII Protocol CLI Tool
 #[derive(Parser, Debug)]
-#[command(name = "evcc-protocol", version, about = "EVCC2/3 Modbus-ASCII Protocol CLI Tool", long_about = None)]
+#[command(name = "abl-evcc", version, about = "ABL EVCC2/3 Wallbox Modbus-ASCII Protocol CLI Tool", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

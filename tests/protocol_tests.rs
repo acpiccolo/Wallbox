@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use evcc_protocol::protocol::*;
+    use abl_evcc_lib::protocol::*;
 
     #[test]
     fn test_lrc_calculation_spec_examples() {

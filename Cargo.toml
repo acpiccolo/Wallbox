@@ -1,7 +1,16 @@
 [package]
-name = "evcc-protocol"
+name = "abl-evcc"
 version = "0.1.0"
 edition = "2021"
+description = "ABL EVCC2/3 wallbox protocol and commandline tool"
+
+[lib]
+name = "abl_evcc_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "abl-evcc"
+path = "src/main.rs"
 
 [dependencies]
 thiserror = "2.0"
