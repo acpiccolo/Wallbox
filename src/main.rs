@@ -6,6 +6,7 @@ use log::*;
 use std::{ops::Deref, panic, time::Duration};
 
 mod commandline;
+mod daemon;
 mod mqtt;
 
 fn logging_init(loglevel: LevelFilter) -> LoggerHandle {
@@ -73,22 +74,10 @@ fn handle_commands(
     no_json: bool,
 ) -> Result<()> {
     match command {
-        commandline::Commands::Daemon { poll_iterval, mode } => match mode {
-            commandline::DaemonOutput::Console => loop {
-                let values = client
-                    .read_all(delay)
-                    .with_context(|| "Cannot read all values")?;
-                if no_json {
-                    println!("{values}");
-                } else {
-                    println!("{}", serde_json::to_string_pretty(&values)?);
-                }
-                std::thread::sleep(*delay.max(poll_iterval));
-            },
-            commandline::DaemonOutput::Mqtt { config_file } => {
-                mqtt::run_mqtt_daemon(client, delay, poll_iterval, config_file, no_json)?;
-            }
-        },
+        commandline::Commands::Daemon { poll_iterval, mode } => {
+            let interval = *delay.max(poll_iterval);
+            daemon::run(client, mode.clone(), interval, no_json)?;
+        }
         commandline::Commands::ReadAll => {
             let values = client
                 .read_all(delay)

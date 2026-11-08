@@ -8,6 +8,7 @@ This repository contains a Rust library and a command-line tool for interacting 
 - [Technical Specifications](#technical-specifications)
 - [Installation & Compilation](#installation--compilation)
 - [Command-Line Usage](#command-line-usage)
+- [MQTT Configuration](#mqtt-configuration-mqttyaml--environment-variables)
 - [Library Usage](#library-usage)
 - [Cargo Features](#cargo-features)
 - [License](#license)
@@ -74,10 +75,40 @@ abl-evcc tcp 192.168.1.100:502 read-all
 ```sh
 abl-evcc rtu --address 1 set-current 16.0
 ```
+
 ### Daemon Mode with MQTT
-```sh
-abl-evcc rtu --address 1 daemon mqtt
-```
+You can run the tool as a daemon that publishes data to an MQTT broker.
+
+- **Log to Console:**
+  ```sh
+  abl-evcc rtu --address 1 daemon console
+  ```
+
+- **Publish to MQTT:**
+  ```sh
+  abl-evcc rtu --address 1 daemon mqtt --mqtt-config /path/to/mqtt.yaml
+  ```
+  If `--mqtt-config` is omitted, `mqtt.yaml` is loaded from the current directory.
+
+### MQTT Configuration (mqtt.yaml & Environment Variables)
+
+All MQTT connection parameters are configured through a YAML file. This approaches centralizes settings like the broker URL, credentials, topic, QoS, and client ID.
+
+**Path Specification:**
+- Use the `--mqtt-config <PATH>` option to specify the path to your MQTT configuration file.
+- If omitted, the application will attempt to load `mqtt.yaml` from the current working directory.
+
+**Mandatory Fields:**
+- The `uri` field within the MQTT configuration YAML file is **mandatory**.
+
+#### Environment Variables Override
+
+You can override or specify configuration values via environment variables:
+* `MQTT_URI`: Overrides `uri`
+* `MQTT_USERNAME`: Overrides `username`
+* `MQTT_PASSWORD`: Overrides `password`
+* `MQTT_TOPIC`: Overrides `topic`
+* `MQTT_CLIENT_ID`: Overrides `client_id`
 
 ## Library Usage
 The `abl_evcc_lib` crate provides two main ways to interact with EVCC charge controllers:
