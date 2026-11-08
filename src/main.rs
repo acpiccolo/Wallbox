@@ -1,27 +1,103 @@
-use abl_evcc_lib::protocol::*;
+use abl_evcc_lib::{protocol::*, tokio_sync_safe_client::SafeClient};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use std::time::Duration;
 
-/// ABL EVCC2/3 Wallbox Modbus-ASCII Protocol CLI Tool
+fn parse_duration_ms(s: &str) -> Result<Duration, String> {
+    let s_clean = s.trim().trim_end_matches("ms");
+    let ms: u64 = s_clean.parse().map_err(|e| format!("Invalid timeout duration: {}", e))?;
+    Ok(Duration::from_millis(ms))
+}
+
+/// ABL EVCC2/3 Wallbox Modbus Protocol CLI Tool
 #[derive(Parser, Debug)]
-#[command(name = "abl-evcc", version, about = "ABL EVCC2/3 Wallbox Modbus-ASCII Protocol CLI Tool", long_about = None)]
+#[command(name = "abl-evcc", version, about = "ABL EVCC2/3 Wallbox Modbus Protocol CLI Tool", long_about = None)]
 pub struct Cli {
+    /// Timeout for Modbus operations in milliseconds (e.g. 1000 or 1000ms)
+    #[arg(long, default_value = "1000ms", value_parser = parse_duration_ms)]
+    pub timeout: Duration,
+
     #[command(subcommand)]
-    pub command: Commands,
+    pub connection: Connection,
+}
+
+fn default_serial_device() -> String {
+    if cfg!(target_os = "windows") {
+        "COM1".to_string()
+    } else {
+        "/dev/ttyUSB0".to_string()
+    }
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerialParity {
+    None,
+    Even,
+    Odd,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerialStopBits {
+    One,
+    Two,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Connection {
+    /// Connect via Serial Modbus RTU / RS485
+    Rtu {
+        /// Serial device port
+        #[arg(short, long, default_value_t = default_serial_device())]
+        device: String,
+
+        /// Baud rate (default: 38400 for ABL EVCC)
+        #[arg(short, long, default_value_t = 38400)]
+        baud_rate: u32,
+
+        /// Parity (default: even for ABL EVCC)
+        #[arg(long, value_enum, default_value_t = SerialParity::Even)]
+        parity: SerialParity,
+
+        /// Stop bits (default: one for ABL EVCC)
+        #[arg(long, value_enum, default_value_t = SerialStopBits::One)]
+        stop_bits: SerialStopBits,
+
+        /// Modbus slave address (1..=16)
+        #[arg(short, long, default_value_t = 1)]
+        address: u8,
+
+        #[command(subcommand)]
+        command: DeviceCommands,
+    },
+
+    /// Connect via Modbus TCP (e.g. RS485-to-Ethernet gateway)
+    Tcp {
+        /// TCP host:port address (e.g. 192.168.1.100:502)
+        #[arg(short, long)]
+        address: String,
+
+        /// Modbus slave address (1..=16)
+        #[arg(short, long, default_value_t = 1)]
+        slave: u8,
+
+        #[command(subcommand)]
+        command: DeviceCommands,
+    },
+
+    /// Offline frame utilities (generate or decode ASCII frames without connecting)
+    Frame {
+        #[command(subcommand)]
+        command: FrameCommands,
+    },
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateActionArg {
-    /// Reset EVCC controller
     Reset,
-    /// Jump to state A1 (Waiting for EV)
     JumpToA1,
-    /// Jump to state E0 (Outlet disabled)
     JumpToE0,
-    /// Jump to state E2 (EVCC setup mode)
     JumpToE2,
-    /// Jump to state F1 (Trigger RCD trip test)
     JumpToF1,
-    /// Enable 20A Load Imbalance Detection
     EnableLoadImbalance20A,
 }
 
@@ -40,44 +116,26 @@ pub enum PowerCycleB1B2Arg {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Commands {
-    /// Read current & status values of the EVCC outlet (Register 0x002E)
+pub enum DeviceCommands {
+    /// Read current & status values of the EVCC outlet
     ReadCurrent {
-        /// Modbus Device ID (1..16, default: 1)
-        #[arg(short, long, default_value_t = 1)]
-        device_id: u8,
-        /// Format: 'full' (0.1A resolution, 5 registers) or 'short' (1A resolution, 3 registers)
+        /// Format: 'full' (0.1A resolution) or 'short' (1A resolution)
         #[arg(long, default_value = "full")]
         resolution: String,
     },
 
-    /// Read device ID, firmware revision, hardware and config (Register 0x0001)
-    ReadDeviceInfo {
-        /// Modbus Device ID (1..16, default: 1)
-        #[arg(short, long, default_value_t = 1)]
-        device_id: u8,
-    },
+    /// Read device ID, firmware revision, hardware and config
+    ReadDeviceInfo,
 
-    /// Read Modbus baud rate, parity, and stop bit settings (Register 0x0003)
-    ReadModbusSettings {
-        /// Modbus Device ID (1..16, default: 1)
-        #[arg(short, long, default_value_t = 1)]
-        device_id: u8,
-    },
+    /// Read Modbus baud rate, parity, and stop bit settings
+    ReadModbusSettings,
 
-    /// Read system and diagnostic flags (Register 0x0006)
-    ReadSystemFlags {
-        /// Modbus Device ID (1..16, default: 1)
-        #[arg(short, long, default_value_t = 1)]
-        device_id: u8,
-    },
+    /// Read system and diagnostic flags
+    ReadSystemFlags,
 
-    /// Set maximum charging current / PWM duty cycle Icmax (Register 0x0014)
+    /// Set maximum charging current (Icmax)
     SetCurrent {
-        /// Modbus Device ID (1..16, default: 1)
-        #[arg(short, long, default_value_t = 1)]
-        device_id: u8,
-        /// Charging current in Amperes (between 6.0 and 80.0 A) or duty cycle if --duty-cycle is set
+        /// Charging current in Amperes (6.0 - 80.0 A) or duty cycle if --duty-cycle is set
         #[arg(value_name = "VALUE")]
         value: f32,
         /// Treat VALUE as duty cycle percentage directly (8.0% - 100.0%) instead of Amperes
@@ -85,21 +143,15 @@ pub enum Commands {
         duty_cycle: bool,
     },
 
-    /// Modify outlet state (Register 0x0005)
+    /// Modify outlet state
     SetState {
-        /// Modbus Device ID (1..16, default: 1)
-        #[arg(short, long, default_value_t = 1)]
-        device_id: u8,
         /// Action to perform: reset, jump-to-a1, jump-to-e0, jump-to-e2, jump-to-f1, enable-load-imbalance20-a
         #[arg(value_enum)]
         action: StateActionArg,
     },
 
-    /// Set Device ID and configure power-cycle / timeout behavior (Register 0x002C)
+    /// Set Device ID and configure power-cycle / timeout behavior
     SetDeviceId {
-        /// Current Modbus Device ID (1..16, default: 1)
-        #[arg(short, long, default_value_t = 1)]
-        device_id: u8,
         /// New Device ID to assign (1..16)
         #[arg(value_name = "NEW_DEVICE_ID")]
         new_device_id: u8,
@@ -110,119 +162,62 @@ pub enum Commands {
         #[arg(long, value_enum, default_value_t = PowerCycleB1B2Arg::NoChange)]
         power_cycle: PowerCycleB1B2Arg,
     },
+}
 
-    /// Decode and inspect a raw Modbus ASCII frame string
-    DecodeFrame {
-        /// ASCII frame string (e.g. ":0103002E0005C9\r\n" or ">01030A2EC3...")
-        frame: String,
-    },
-
-    /// Low-level raw register read frame generator
-    RawRead {
-        /// Modbus Device ID (1..16)
+#[derive(Subcommand, Debug)]
+pub enum FrameCommands {
+    /// Generate an ASCII read-frame
+    EncodeRead {
         device_id: u8,
-        /// Register start address (e.g. 0x002E or 46)
         start_register: String,
-        /// Quantity of 16-bit words
         qty: u16,
     },
+    /// Generate an ASCII write-icmax frame
+    EncodeWriteCurrent {
+        device_id: u8,
+        current_amps: f32,
+    },
+    /// Decode and inspect a raw Modbus ASCII frame string
+    Decode {
+        frame: String,
+    },
 }
 
-fn parse_u16_hex_or_dec(arg: &str) -> Result<u16, String> {
-    if arg.starts_with("0x") || arg.starts_with("0X") {
-        u16::from_str_radix(&arg[2..], 16).map_err(|e| e.to_string())
-    } else {
-        arg.parse::<u16>().map_err(|e| e.to_string())
-    }
-}
-
-fn build_read_frame(device_id: u8, address: u16, quantity: u16) -> String {
-    let mut payload = Vec::with_capacity(4);
-    payload.extend_from_slice(&address.to_be_bytes());
-    payload.extend_from_slice(&quantity.to_be_bytes());
-    encode_ascii_frame(device_id, 0x03, &payload, ':')
-}
-
-fn build_write_single_reg_frame(device_id: u8, address: u16, word: u16) -> String {
-    let mut payload = Vec::with_capacity(7);
-    payload.extend_from_slice(&address.to_be_bytes());
-    payload.extend_from_slice(&1u16.to_be_bytes()); // quantity = 1
-    payload.push(2); // byte count = 2
-    payload.extend_from_slice(&word.to_be_bytes());
-    encode_ascii_frame(device_id, 0x10, &payload, ':')
-}
-
-fn main() {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Commands::ReadCurrent {
-            device_id,
-            resolution,
-        } => {
-            let (reg, qty) = if resolution.to_lowercase() == "short" {
-                (ReadCurrentAmps::ADDRESS, ReadCurrentAmps::QUANTITY)
+fn execute_device_command(client: &mut SafeClient, command: &DeviceCommands) -> Result<()> {
+    match command {
+        DeviceCommands::ReadCurrent { resolution } => {
+            if resolution.to_lowercase() == "short" {
+                let cur = client.read_current_amps().context("Failed reading short current")?;
+                println!("{}", cur);
             } else {
-                (ReadCurrentFull::ADDRESS, ReadCurrentFull::QUANTITY)
-            };
-            let frame = build_read_frame(device_id, reg, qty);
-            print!("{}", frame);
+                let cur = client.read_current_full().context("Failed reading full current")?;
+                println!("{}", cur);
+            }
         }
-
-        Commands::ReadDeviceInfo { device_id } => {
-            let frame = build_read_frame(
-                device_id,
-                DeviceIdAndFirmwareRevision::ADDRESS,
-                DeviceIdAndFirmwareRevision::QUANTITY,
-            );
-            print!("{}", frame);
+        DeviceCommands::ReadDeviceInfo => {
+            let info = client.read_device_info().context("Failed reading device info")?;
+            println!("{}", info);
         }
-
-        Commands::ReadModbusSettings { device_id } => {
-            let frame = build_read_frame(
-                device_id,
-                ModbusSettings::ADDRESS,
-                ModbusSettings::QUANTITY,
-            );
-            print!("{}", frame);
+        DeviceCommands::ReadModbusSettings => {
+            let settings = client.read_modbus_settings().context("Failed reading modbus settings")?;
+            println!("{}", settings);
         }
-
-        Commands::ReadSystemFlags { device_id } => {
-            let frame = build_read_frame(
-                device_id,
-                SystemFlags::ADDRESS,
-                SystemFlags::QUANTITY,
-            );
-            print!("{}", frame);
+        DeviceCommands::ReadSystemFlags => {
+            let flags = client.read_system_flags().context("Failed reading system flags")?;
+            println!("{:#?}", flags);
         }
-
-        Commands::SetCurrent {
-            device_id,
-            value,
-            duty_cycle,
-        } => {
-            let duty_cycle_x10 = if duty_cycle {
+        DeviceCommands::SetCurrent { value, duty_cycle } => {
+            let duty_cycle_x10 = if *duty_cycle {
                 (value * 10.0).round() as u16
             } else {
-                // According to IEC 61851-1:
-                // For 6A <= I <= 31A: Duty cycle = I / 0.6 = I * 10 / 6
-                // Duty cycle [%]*10 = (I * 10 / 0.6) = I * 100 / 6
                 let dc_val = (value * 100.0 / 6.0).round() as u16;
                 dc_val.clamp(80, 1000)
             };
-
-            let icmax = match SetIcmax::new(duty_cycle_x10) {
-                Ok(val) => val,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            let frame = build_write_single_reg_frame(device_id, SetIcmax::ADDRESS, icmax.encode_to_word());
-            print!("{}", frame);
+            let icmax = SetIcmax::new(duty_cycle_x10).context("Invalid current / duty cycle")?;
+            client.set_current(icmax).context("Failed setting current")?;
+            println!("Current successfully set (duty cycle: {:.1}%)", duty_cycle_x10 as f32 / 10.0);
         }
-
-        Commands::SetState { device_id, action } => {
+        DeviceCommands::SetState { action } => {
             let proto_action = match action {
                 StateActionArg::Reset => ModifyStateAction::Reset,
                 StateActionArg::JumpToA1 => ModifyStateAction::JumpToA1,
@@ -233,16 +228,10 @@ fn main() {
                     ModifyStateAction::LoadImbalanceDetection20AEnabled
                 }
             };
-            let frame = build_write_single_reg_frame(
-                device_id,
-                ModifyStateAction::ADDRESS,
-                proto_action.encode_to_word(),
-            );
-            print!("{}", frame);
+            client.set_state(proto_action).context("Failed setting state")?;
+            println!("State modified successfully to: {:?}", action);
         }
-
-        Commands::SetDeviceId {
-            device_id,
+        DeviceCommands::SetDeviceId {
             new_device_id,
             timeout,
             power_cycle,
@@ -257,87 +246,108 @@ fn main() {
                 PowerCycleB1B2Arg::EnterB2IfConnected => PowerCycleB1B2Option::EnterB2IfConnected,
                 PowerCycleB1B2Arg::StopInB1IfConnected => PowerCycleB1B2Option::StopInB1IfConnected,
             };
-            let set_cmd = match SetDeviceId::new(new_device_id, ut, pc) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            let frame = build_write_single_reg_frame(
-                device_id,
-                SetDeviceId::ADDRESS,
-                set_cmd.encode_to_word(),
-            );
-            print!("{}", frame);
+            let set_cmd = SetDeviceId::new(*new_device_id, ut, pc).context("Invalid Device ID parameter")?;
+            client.set_device_id(set_cmd).context("Failed setting device ID")?;
+            println!("Device ID successfully changed to: {}", new_device_id);
         }
+    }
+    Ok(())
+}
 
-        Commands::DecodeFrame { frame } => {
-            match decode_ascii_frame(&frame) {
-                Ok((dev_id, fc, payload)) => {
-                    println!("Decoded Modbus ASCII Frame:");
-                    println!("  Device ID: {:#04X} ({})", dev_id, dev_id);
-                    println!("  Function Code: {:#04X}", fc);
-                    let hex_payload: Vec<String> =
-                        payload.iter().map(|b| format!("{:02X}", b)).collect();
-                    println!("  Payload: {}", hex_payload.join(""));
-
-                    // Attempt automatic response register decoding if Read response (FC 0x03)
-                    if fc == 0x03 && payload.len() >= 2 {
-                        let byte_count = payload[0] as usize;
-                        if payload.len() >= 1 + byte_count && byte_count >= 2 {
-                            let reg_data = &payload[1..1 + byte_count];
-                            let words = bytes_to_words(reg_data);
-                            let referred_reg = (words[0] >> 8) as u8;
-                            println!("  Referred Register: {:#04X}", referred_reg);
-
-                            match referred_reg {
-                                0x01 => {
-                                    if let Ok(info) = DeviceIdAndFirmwareRevision::decode_from_words(&words) {
-                                        println!("  Interpreted: {}", info);
-                                    }
-                                }
-                                0x03 => {
-                                    if let Ok(settings) = ModbusSettings::decode_from_words(&words) {
-                                        println!("  Interpreted: {}", settings);
-                                    }
-                                }
-                                0x2E => {
-                                    if let Ok(cur) = ReadCurrentFull::decode_from_words(&words) {
-                                        println!("  Interpreted: {}", cur);
-                                    }
-                                }
-                                0x33 => {
-                                    if let Ok(cur) = ReadCurrentAmps::decode_from_words(&words) {
-                                        println!("  Interpreted: {}", cur);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Frame decoding error: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-
-        Commands::RawRead {
+fn execute_frame_command(command: &FrameCommands) -> Result<()> {
+    match command {
+        FrameCommands::EncodeRead {
             device_id,
             start_register,
             qty,
         } => {
-            let reg = match parse_u16_hex_or_dec(&start_register) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Invalid register address: {}", e);
-                    std::process::exit(1);
-                }
+            let reg = if start_register.starts_with("0x") || start_register.starts_with("0X") {
+                u16::from_str_radix(&start_register[2..], 16)?
+            } else {
+                start_register.parse::<u16>()?
             };
-            let frame = build_read_frame(device_id, reg, qty);
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&reg.to_be_bytes());
+            payload.extend_from_slice(&qty.to_be_bytes());
+            let frame = encode_ascii_frame(*device_id, 0x03, &payload, ':');
             print!("{}", frame);
         }
+        FrameCommands::EncodeWriteCurrent {
+            device_id,
+            current_amps,
+        } => {
+            let dc_val = (current_amps * 100.0 / 6.0).round() as u16;
+            let duty_cycle_x10 = dc_val.clamp(80, 1000);
+            let icmax = SetIcmax::new(duty_cycle_x10).context("Invalid current")?;
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&SetIcmax::ADDRESS.to_be_bytes());
+            payload.extend_from_slice(&1u16.to_be_bytes());
+            payload.push(2);
+            payload.extend_from_slice(&icmax.encode_to_word().to_be_bytes());
+            let frame = encode_ascii_frame(*device_id, 0x10, &payload, ':');
+            print!("{}", frame);
+        }
+        FrameCommands::Decode { frame } => {
+            let (dev_id, fc, payload) = decode_ascii_frame(frame).context("Failed decoding ASCII frame")?;
+            println!("Decoded Frame:");
+            println!("  Device ID: {:#04X} ({})", dev_id, dev_id);
+            println!("  Function Code: {:#04X}", fc);
+            let hex_payload: Vec<String> = payload.iter().map(|b| format!("{:02X}", b)).collect();
+            println!("  Payload: {}", hex_payload.join(""));
+        }
     }
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let timeout: Duration = cli.timeout;
+
+    match cli.connection {
+        Connection::Rtu {
+            device,
+            baud_rate,
+            parity,
+            stop_bits,
+            address,
+            command,
+        } => {
+            let parity = match parity {
+                SerialParity::None => tokio_serial::Parity::None,
+                SerialParity::Even => tokio_serial::Parity::Even,
+                SerialParity::Odd => tokio_serial::Parity::Odd,
+            };
+            let stop_bits = match stop_bits {
+                SerialStopBits::One => tokio_serial::StopBits::One,
+                SerialStopBits::Two => tokio_serial::StopBits::Two,
+            };
+            let builder = abl_evcc_lib::tokio_common::serial_port_builder(
+                &device, baud_rate, parity, stop_bits,
+            );
+            let mut ctx = tokio_modbus::client::sync::rtu::connect_slave(&builder, tokio_modbus::Slave(address))
+                .with_context(|| format!("Cannot open serial device {} baud rate {}", device, baud_rate))?;
+            ctx.set_timeout(timeout);
+            let mut client = SafeClient::new(ctx);
+            execute_device_command(&mut client, &command)?;
+        }
+        Connection::Tcp {
+            address,
+            slave,
+            command,
+        } => {
+            let socket_addr = address
+                .parse()
+                .with_context(|| format!("Cannot parse TCP socket address {}", address))?;
+            let mut ctx = tokio_modbus::client::sync::tcp::connect_slave(socket_addr, tokio_modbus::Slave(slave))
+                .with_context(|| format!("Cannot open TCP connection to {}", socket_addr))?;
+            ctx.set_timeout(timeout);
+            let mut client = SafeClient::new(ctx);
+            execute_device_command(&mut client, &command)?;
+        }
+        Connection::Frame { command } => {
+            execute_frame_command(&command)?;
+        }
+    }
+
+    Ok(())
 }

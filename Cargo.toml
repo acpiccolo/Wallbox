@@ -11,12 +11,36 @@ path = "src/lib.rs"
 [[bin]]
 name = "abl-evcc"
 path = "src/main.rs"
+required-features = ["bin-dependencies"]
+
+[features]
+default = ["bin-dependencies"]
+bin-dependencies = [
+    "safe-client-sync",
+    "tokio-rtu-sync",
+    "tokio-tcp-sync",
+    "serde",
+    "dep:anyhow",
+]
+tokio-rtu-sync = ["tokio-modbus/rtu-sync", "dep:tokio-serial", "dep:paste"]
+tokio-tcp-sync = [
+    "tokio/net",
+    "tokio-modbus/tcp-sync",
+    "dep:paste",
+]
+serde = ["dep:serde"]
+safe-client-sync = []
 
 [dependencies]
 thiserror = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
+anyhow = { version = "1.0", optional = true }
+paste = { version = "1.0", optional = true }
 
-[features]
-default = []
-serde = ["dep:serde"]
+tokio-modbus = { version = "0.17", default-features = false, optional = true }
+tokio-serial = { version = "5.4", optional = true }
+tokio = { version = "1", default-features = false, optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
