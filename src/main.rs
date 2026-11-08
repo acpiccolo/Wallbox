@@ -3,18 +3,18 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::time::Duration;
 
-fn parse_duration_ms(s: &str) -> Result<Duration, String> {
-    let s_clean = s.trim().trim_end_matches("ms");
-    let ms: u64 = s_clean.parse().map_err(|e| format!("Invalid timeout duration: {}", e))?;
-    Ok(Duration::from_millis(ms))
+mod mqtt;
+
+fn parse_duration(s: &str) -> Result<Duration, String> {
+    humantime::parse_duration(s).map_err(|e| format!("Invalid duration: {}", e))
 }
 
 /// ABL EVCC2/3 Wallbox Modbus Protocol CLI Tool
 #[derive(Parser, Debug)]
 #[command(name = "abl-evcc", version, about = "ABL EVCC2/3 Wallbox Modbus Protocol CLI Tool", long_about = None)]
 pub struct Cli {
-    /// Timeout for Modbus operations in milliseconds (e.g. 1000 or 1000ms)
-    #[arg(long, default_value = "1000ms", value_parser = parse_duration_ms)]
+    /// Timeout for Modbus operations
+    #[arg(long, default_value = "1000ms", value_parser = parse_duration)]
     pub timeout: Duration,
 
     #[command(subcommand)]
@@ -115,8 +115,35 @@ pub enum PowerCycleB1B2Arg {
     StopInB1IfConnected,
 }
 
+#[derive(Subcommand, Debug, Clone, PartialEq)]
+pub enum DaemonOutput {
+    /// Continuously read and print values to stdout (console)
+    Console,
+    /// Continuously read and publish values to an MQTT Broker
+    Mqtt {
+        /// The configuration file for the MQTT broker
+        #[arg(long, default_value = mqtt::MqttConfig::DEFAULT_CONFIG_FILE)]
+        config_file: String,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 pub enum DeviceCommands {
+    /// Continuous polling daemon mode (Console or MQTT)
+    Daemon {
+        /// Polling interval (e.g. 2s, 500ms)
+        #[arg(short, long, default_value = "2s", value_parser = parse_duration)]
+        poll_interval: Duration,
+
+        /// Output mode (Console or Mqtt)
+        #[command(subcommand)]
+        mode: DaemonOutput,
+
+        /// Disable JSON formatted output
+        #[arg(long, default_value_t = false)]
+        no_json: bool,
+    },
+
     /// Read current & status values of the EVCC outlet
     ReadCurrent {
         /// Format: 'full' (0.1A resolution) or 'short' (1A resolution)
@@ -185,6 +212,29 @@ pub enum FrameCommands {
 
 fn execute_device_command(client: &mut SafeClient, command: &DeviceCommands) -> Result<()> {
     match command {
+        DeviceCommands::Daemon {
+            poll_interval,
+            mode,
+            no_json,
+        } => match mode {
+            DaemonOutput::Console => {
+                println!("Daemon started. Polling every {:?}", poll_interval);
+                loop {
+                    let cur = client
+                        .read_current_full()
+                        .context("Failed reading current")?;
+                    if *no_json {
+                        println!("{}", cur);
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&cur)?);
+                    }
+                    std::thread::sleep(*poll_interval);
+                }
+            }
+            DaemonOutput::Mqtt { config_file } => {
+                mqtt::run_mqtt_daemon(client, poll_interval, config_file, *no_json)?;
+            }
+        },
         DeviceCommands::ReadCurrent { resolution } => {
             if resolution.to_lowercase() == "short" {
                 let cur = client.read_current_amps().context("Failed reading short current")?;
