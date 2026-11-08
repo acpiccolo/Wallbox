@@ -1,8 +1,13 @@
-//! Common types, errors, and serial builder for tokio-based Modbus connections.
+//! This module provides common data structures and error types for the `tokio`
+//! based clients.
+//!
+//! It defines the `Error` enum, which encapsulates all possible communication
+//! errors, and the `AllSettings` and `AllValues` structs, which are used to
+//! return all the settings and values from the EVCC controller in one go.
 
 use crate::protocol as proto;
 
-/// Represents errors that can occur during Modbus communication with the EVCC controller.
+/// Represents all possible errors that can occur during Modbus communication.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// An error originating from protocol logic or payload decoding.
@@ -22,12 +27,12 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(feature = "tokio-rtu-sync")]
+#[cfg(any(feature = "tokio-rtu-sync", feature = "tokio-rtu"))]
 pub const DATA_BITS: &tokio_serial::DataBits = &tokio_serial::DataBits::Eight;
 
-#[cfg(feature = "tokio-rtu-sync")]
+#[cfg(any(feature = "tokio-rtu-sync", feature = "tokio-rtu"))]
 pub fn serial_port_builder(
     device: &str,
     baud_rate: u32,
@@ -39,4 +44,38 @@ pub fn serial_port_builder(
         .stop_bits(stop_bits)
         .data_bits(*DATA_BITS)
         .flow_control(tokio_serial::FlowControl::None)
+}
+
+/// A struct containing all configuration and settings of the EVCC controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AllSettings {
+    pub device_info: proto::DeviceIdAndFirmwareRevision,
+    pub modbus_settings: proto::ModbusSettings,
+    pub system_flags: proto::SystemFlags,
+}
+
+impl std::fmt::Display for AllSettings {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(fmt, "Device Info: {}", self.device_info)?;
+        writeln!(fmt, "Modbus Settings: {}", self.modbus_settings)?;
+        write!(fmt, "System Flags: State Pointer={:#04X}", self.system_flags.state_machine_pointer)?;
+        Ok(())
+    }
+}
+
+/// A struct containing all measurement and state values of the EVCC controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AllValues {
+    pub current_full: proto::ReadCurrentFull,
+    pub current_amps: proto::ReadCurrentAmps,
+}
+
+impl std::fmt::Display for AllValues {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(fmt, "Full: {}", self.current_full)?;
+        write!(fmt, "Amps: {}", self.current_amps)?;
+        Ok(())
+    }
 }

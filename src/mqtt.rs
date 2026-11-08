@@ -118,14 +118,13 @@ impl MqttConfig {
 
 pub fn run_mqtt_daemon(
     client: &mut abl_evcc_lib::tokio_sync_safe_client::SafeClient,
+    delay: &Duration,
     poll_interval: &Duration,
     config_file: &str,
     no_json: bool,
 ) -> Result<()> {
     let config = MqttConfig::load(config_file)?;
     let mqtt_client = config.create_client()?;
-
-    println!("MQTT daemon started. Publishing to topic '{}' every {:?}", config.topic, poll_interval);
 
     loop {
         let current = client
@@ -162,6 +161,6 @@ pub fn run_mqtt_daemon(
                 .with_context(|| "Cannot publish MQTT message")?;
         }
 
-        std::thread::sleep(*poll_interval);
+        std::thread::sleep(*delay.max(poll_interval));
     }
 }

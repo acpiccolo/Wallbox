@@ -1,0 +1,16 @@
+# MQTT configuration to the broker
+# Copy and modify this file to mqtt.yaml
+
+# URI to the MQTT broker like: mqtt://localhost:1883
+uri: mqtt://localhost:1883
+
+# User name for authentication
+username: mqtt_broker_user
+
+# Password for authentication
+password: mqtt_broker_password
+
+# QOS (quality of service) to use
+qos: 0
+
+topic: abl-evcc

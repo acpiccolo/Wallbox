@@ -2,6 +2,8 @@
 name = "abl-evcc"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/acpiccolo/ABL-EVCC-Wallbox"
 description = "ABL EVCC2/3 wallbox protocol and commandline tool"
 
 [lib]
@@ -20,29 +22,34 @@ bin-dependencies = [
     "safe-client-async",
     "tokio-rtu-sync",
     "tokio-tcp-sync",
-    "tokio-rtu",
-    "tokio-tcp",
     "serde",
+    "clap/derive",
     "dep:anyhow",
-    "dep:paho-mqtt",
-    "dep:serde_yaml",
-    "dep:serde_json",
-    "dep:rand",
-    "dep:humantime",
-    "dep:humantime-serde",
     "dep:log",
+    "dep:tokio-serial",
+    "dep:clap-verbosity-flag",
+    "dep:flexi_logger",
+    "dep:humantime",
+    "dep:dialoguer",
+    "dep:paho-mqtt",
+    "dep:serde_json",
+    "dep:serde_yaml",
+    "dep:rand",
+    "dep:humantime-serde",
 ]
 tokio-rtu-sync = ["tokio-modbus/rtu-sync", "dep:tokio-serial", "dep:paste"]
+tokio-rtu = ["tokio/time", "tokio-modbus/rtu", "dep:tokio-serial", "dep:paste"]
 tokio-tcp-sync = [
     "tokio/net",
     "tokio-modbus/tcp-sync",
+    "dep:tokio-serial",
     "dep:paste",
 ]
-tokio-rtu = ["tokio/time", "tokio-modbus/rtu", "dep:tokio-serial", "dep:paste"]
 tokio-tcp = [
     "tokio/time",
     "tokio/net",
     "tokio-modbus/tcp",
+    "dep:tokio-serial",
     "dep:paste",
 ]
 serde = ["dep:serde"]
@@ -50,23 +57,25 @@ safe-client-sync = []
 safe-client-async = []
 
 [dependencies]
-thiserror = "2.0"
-clap = { version = "4.5", features = ["derive"] }
-serde = { version = "1.0", features = ["derive"], optional = true }
-anyhow = { version = "1.0", optional = true }
-paste = { version = "1.0", optional = true }
-log = { version = "0.4", optional = true }
-
+thiserror = "2"
 tokio-modbus = { version = "0.17", default-features = false, optional = true }
-tokio-serial = { version = "5.4", optional = true }
+tokio-serial = { version = "5", optional = true }
 tokio = { version = "1", features = ["sync", "time", "net"], default-features = false, optional = true }
-
+paste = { version = "1", optional = true }
+# Requirements for bin
+anyhow = { version = "1", optional = true }
+log = { version = "0.4", optional = true }
+clap = { version = "4", optional = true }
+clap-verbosity-flag = { version = "3", optional = true }
+flexi_logger = { version = "0.31", optional = true }
+humantime = { version = "2", optional = true }
 paho-mqtt = { version = "0.14", optional = true }
+serde_json = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 serde_yaml = { version = "0.9", optional = true }
-serde_json = { version = "1.0", optional = true }
 rand = { version = "0.10", optional = true }
-humantime = { version = "2.4", optional = true }
-humantime-serde = { version = "1.1", optional = true }
+humantime-serde = { version = "1", optional = true }
+dialoguer = { version = "0.12", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

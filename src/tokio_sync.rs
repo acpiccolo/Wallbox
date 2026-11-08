@@ -2,8 +2,9 @@
 
 use crate::{
     protocol::{self as proto, ModbusParam},
-    tokio_common::Result,
+    tokio_common::{AllSettings, AllValues, Result},
 };
+use std::time::Duration;
 use tokio_modbus::prelude::{SyncReader, SyncWriter};
 
 pub struct EVCC;
@@ -89,5 +90,36 @@ impl EVCC {
     ) -> Result<()> {
         let words = [config.encode_to_word()];
         Ok(ctx.write_multiple_registers(proto::SetDeviceId::ADDRESS, &words)??)
+    }
+
+    /// Read all measurement values in batch
+    pub fn read_all(
+        ctx: &mut tokio_modbus::client::sync::Context,
+        delay: &Duration,
+    ) -> Result<AllValues> {
+        let current_full = Self::read_current_full(ctx)?;
+        std::thread::sleep(*delay);
+        let current_amps = Self::read_current_amps(ctx)?;
+        Ok(AllValues {
+            current_full,
+            current_amps,
+        })
+    }
+
+    /// Read all configuration settings in batch
+    pub fn read_all_settings(
+        ctx: &mut tokio_modbus::client::sync::Context,
+        delay: &Duration,
+    ) -> Result<AllSettings> {
+        let device_info = Self::read_device_info(ctx)?;
+        std::thread::sleep(*delay);
+        let modbus_settings = Self::read_modbus_settings(ctx)?;
+        std::thread::sleep(*delay);
+        let system_flags = Self::read_system_flags(ctx)?;
+        Ok(AllSettings {
+            device_info,
+            modbus_settings,
+            system_flags,
+        })
     }
 }

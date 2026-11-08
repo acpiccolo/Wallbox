@@ -3,9 +3,9 @@
 use crate::{
     protocol as proto,
     tokio_async::EVCC,
-    tokio_common::Result,
+    tokio_common::{AllSettings, AllValues, Result},
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_modbus::client::Context;
 
@@ -68,5 +68,17 @@ impl SafeClient {
     pub async fn set_device_id(&mut self, config: proto::SetDeviceId) -> Result<()> {
         let mut ctx = self.ctx.lock().await;
         EVCC::set_device_id(&mut ctx, config).await
+    }
+
+    /// Read all measurement values in batch
+    pub async fn read_all(&mut self, delay: &Duration) -> Result<AllValues> {
+        let mut ctx = self.ctx.lock().await;
+        EVCC::read_all(&mut ctx, delay).await
+    }
+
+    /// Read all settings in batch
+    pub async fn read_all_settings(&mut self, delay: &Duration) -> Result<AllSettings> {
+        let mut ctx = self.ctx.lock().await;
+        EVCC::read_all_settings(&mut ctx, delay).await
     }
 }
