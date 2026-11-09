@@ -2,8 +2,8 @@
 //! based clients.
 //!
 //! It defines the `Error` enum, which encapsulates all possible communication
-//! errors, and the `AllSettings` and `AllValues` structs, which are used to
-//! return all the settings and values from the EVCC controller in one go.
+//! errors, and the `AllValues` struct, which is used to
+//! return all values from the EVCC1 controller in one go.
 
 use crate::protocol as proto;
 
@@ -46,36 +46,23 @@ pub fn serial_port_builder(
         .flow_control(tokio_serial::FlowControl::None)
 }
 
-/// A struct containing all configuration and settings of the EVCC controller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AllSettings {
-    pub device_info: proto::DeviceIdAndFirmwareRevision,
-    pub modbus_settings: proto::ModbusSettings,
-    pub system_flags: proto::SystemFlags,
-}
-
-impl std::fmt::Display for AllSettings {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(fmt, "Device Info: {}", self.device_info)?;
-        writeln!(fmt, "Modbus Settings: {}", self.modbus_settings)?;
-        write!(fmt, "System Flags: State Pointer={:#04X}", self.system_flags.state_machine_pointer)?;
-        Ok(())
-    }
-}
-
-/// A struct containing all measurement and state values of the EVCC controller.
+/// A struct containing all measurement and state values of the EVCC1 controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AllValues {
-    pub current_full: proto::ReadCurrentFull,
-    pub current_amps: proto::ReadCurrentAmps,
+    /// Register 256: Ladestatus (Fahrzeug-Status)
+    pub status: proto::ChargeStatus,
+    /// Register 257: Maximaler Ladestrom (Vorgabe / Freigabestatus) in Ampere
+    pub max_current: proto::ChargingCurrent,
+    /// Register 258: Aktuelle Ladeleistung / Stromstärke
+    pub power_or_current: proto::PowerOrCurrent,
 }
 
 impl std::fmt::Display for AllValues {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(fmt, "Full: {}", self.current_full)?;
-        write!(fmt, "Amps: {}", self.current_amps)?;
+        writeln!(fmt, "Ladestatus: {}", self.status)?;
+        writeln!(fmt, "Max. Ladestrom: {}", self.max_current)?;
+        write!(fmt, "Ladeleistung / Stromstärke: {}", self.power_or_current)?;
         Ok(())
     }
 }

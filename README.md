@@ -1,8 +1,9 @@
-# ABL EVCC Wallbox Modbus Library and Tool
+# ABL EVCC1 Wallbox Modbus Library and Tool
 
-This repository contains a Rust library and a command-line tool for interacting with ABL EVCC2/3 series charge controllers (e.g. used in ABL eMH1/eMH2/eMH3 wallboxes) via the Modbus ASCII/RTU protocol.
+This repository contains a Rust library and a command-line tool for interacting with ABL EVCC1 series charge controllers (e.g. used in ABL eMH1 wallboxes) via the Modbus protocol (ASCII / RTU / TCP).
 
 ## Table of Contents
+- [EVCC1 Modbus Register Mapping](#evcc1-modbus-register-mapping)
 - [Hardware Requirements](#hardware-requirements)
 - [Technical Documentation](#technical-documentation)
 - [Technical Specifications](#technical-specifications)
@@ -13,14 +14,23 @@ This repository contains a Rust library and a command-line tool for interacting 
 - [Cargo Features](#cargo-features)
 - [License](#license)
 
+## EVCC1 Modbus Register Mapping
+| Register (Dezimal) | Typ / Richtung | Funktion / Beschreibung bei EVCC1 |
+|:---:|:---:|:---|
+| **256** (`0x0100`) | Read (Holding) | **Ladestatus (Fahrzeug-Status):** Liefert numerische ASCII-Werte zurück (z. B. 65 = 'A' Standby/Bereit, 66 = 'B' Fahrzeug verbunden, 67 = 'C' Ladevorgang aktiv, 68 = 'D' Belüftung, 69 = 'E', 70 = 'F' Fehler). |
+| **257** (`0x0101`) | Read / Write | **Maximaler Ladestrom (Vorgabe / Status):** Dient gleichzeitig als Statusabfrage für die Freigabe und zum Einstellen der Stromstärke (z. B. Wert 16 für 16A, 0 für Ladestopp / Freigabe entzogen, Bereich 6..80A bzw. 0). |
+| **258** (`0x0102`) | Read (Holding) | **Aktuelle Ladeleistung / Stromstärke:** Rohwert für Leistung oder Phasenströme je nach Firmware der eMH1. |
+
 ## Hardware Requirements
 To use this tool, you need:
-- An **ABL Wallbox (e.g., eMH1, eMH2, eMH3)** or any EVSE with an **EVCC2/3 charge controller**.
-- A **USB-to-RS485 converter** (for RTU mode) or a **Modbus TCP gateway**.
+- An **ABL Wallbox (e.g., eMH1)** or any EVSE with an **EVCC1 charge controller**.
+- A **USB-to-RS485 converter** (for RTU/ASCII mode) or a **Modbus TCP gateway**.
 
 ## Technical Documentation
-For more detailed information, please refer to the official specification in the [`docs/`](./docs/) directory:
-- [`Schnittstellenbeschreibung_Modbus-ASCII.pdf`](./docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf)
+For more detailed information, please refer to the documentation in the [`docs/`](./docs/) directory:
+- [`docs/EVCC1_Modbus_Register.md`](./docs/EVCC1_Modbus_Register.md) – Nachweise und detaillierte Registerspezifikation.
+- [`docs/EVCC.pdf`](./docs/EVCC.pdf) – Offizielle ABL SURSUM EVCC Montage- und Bedienungsanleitung (Dok. Nr. 03 0009 01 D).
+- [`docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf`](./docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf) – Offizielle ABL EVCC2/3 Schnittstellenspezifikation.
 
 ## Technical Specifications
 | Feature | Details |
@@ -63,17 +73,32 @@ Ensure you have the following dependencies installed:
 ```sh
 abl-evcc --help
 ```
-### Read Values via RTU (RS485)
+### Read All Values via RTU (RS485)
 ```sh
 abl-evcc rtu --device /dev/ttyUSB0 --baud-rate 38400 --address 1 read-all
+```
+### Read Status (Register 256)
+```sh
+abl-evcc rtu --address 1 read-status
+```
+### Read & Set Charging Current (Register 257)
+```sh
+# Read current limit:
+abl-evcc rtu --address 1 read-current
+
+# Set charging current to 16A:
+abl-evcc rtu --address 1 set-current 16
+
+# Stop charging (0A):
+abl-evcc rtu --address 1 set-current 0
+```
+### Read Power or Current (Register 258)
+```sh
+abl-evcc rtu --address 1 read-power
 ```
 ### Read Values via TCP Gateway
 ```sh
 abl-evcc tcp 192.168.1.100:502 read-all
-```
-### Set Charging Current
-```sh
-abl-evcc rtu --address 1 set-current 16.0
 ```
 
 ### Daemon Mode with MQTT
@@ -90,33 +115,17 @@ You can run the tool as a daemon that publishes data to an MQTT broker.
   ```
   If `--mqtt-config` is omitted, `mqtt.yaml` is loaded from the current directory.
 
-### MQTT Configuration (mqtt.yaml & Environment Variables)
-
-All MQTT connection parameters are configured through a YAML file. This approaches centralizes settings like the broker URL, credentials, topic, QoS, and client ID.
-
-**Path Specification:**
-- Use the `--mqtt-config <PATH>` option to specify the path to your MQTT configuration file.
-- If omitted, the application will attempt to load `mqtt.yaml` from the current working directory.
-
-**Mandatory Fields:**
-- The `uri` field within the MQTT configuration YAML file is **mandatory**.
-
-#### Environment Variables Override
-
-You can override or specify configuration values via environment variables:
-* `MQTT_URI`: Overrides `uri`
-* `MQTT_USERNAME`: Overrides `username`
-* `MQTT_PASSWORD`: Overrides `password`
-* `MQTT_TOPIC`: Overrides `topic`
-* `MQTT_CLIENT_ID`: Overrides `client_id`
+  Published topics:
+  - `<topic>/status`: ASCII letter (`A`, `B`, `C`, etc.)
+  - `<topic>/status_code`: ASCII integer (65, 66, 67, etc.)
+  - `<topic>/status_description`: Human-readable status description
+  - `<topic>/max_current`: Configured charging current in Amperes
+  - `<topic>/enabled`: Boolean indicating if charging is allowed (`true` if current >= 6A)
+  - `<topic>/power_or_current`: Measurement value from register 258
+  - `<topic>/JSON`: Full JSON object with all values
 
 ## Library Usage
-The `abl_evcc_lib` crate provides two main ways to interact with EVCC charge controllers:
-
-1. **High-Level, Safe Clients**: Stateful, thread-safe clients (`SafeClient` in `tokio_sync_safe_client` and `tokio_async_safe_client`).
-2. **Low-Level Stateless Functions**: Direct mapping in `tokio_sync` and `tokio_async`.
-
-### Quick Start: Synchronous Client
+The `abl_evcc_lib` crate provides high-level and low-level interfaces for EVCC1 controllers:
 
 ```rust
 use abl_evcc_lib::tokio_sync_safe_client::SafeClient;
@@ -127,7 +136,7 @@ use tokio_modbus::Slave;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_addr = "192.168.1.100:502".parse()?;
     let ctx = tcp::connect_slave(socket_addr, Slave(1))?;
-    let mut client = SafeClient::new(ctx);
+    let client = SafeClient::new(ctx);
 
     let values = client.read_all(&Duration::from_millis(50))?;
     println!("Values: {:#?}", values);
