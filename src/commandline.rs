@@ -20,12 +20,12 @@ pub fn parse_address(s: &str) -> Result<u8, String> {
     }
 }
 
-pub fn parse_current(s: &str) -> Result<f32, String> {
-    let val = s.parse::<f32>().map_err(|e| format!("{e}"))?;
-    if (6.0..=80.0).contains(&val) {
+pub fn parse_current(s: &str) -> Result<u16, String> {
+    let val = s.parse::<u16>().map_err(|e| format!("{e}"))?;
+    if val == 0 || (6..=80).contains(&val) {
         Ok(val)
     } else {
-        Err(format!("Current must be between 6.0A and 80.0A, got {val}"))
+        Err(format!("Current must be 0 (stop) or between 6A and 80A, got {val}"))
     }
 }
 
@@ -53,36 +53,6 @@ impl Default for ParityAndStopBit {
     fn default() -> Self {
         Self::EvenParityOneStopBit
     }
-}
-
-#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StateAction {
-    #[value(name = "reset", help = "Reset EVCC controller")]
-    Reset,
-    #[value(name = "a1", help = "Jump to state A1 (Waiting for EV)")]
-    JumpToA1,
-    #[value(name = "e0", help = "Jump to state E0 (Outlet disabled)")]
-    JumpToE0,
-    #[value(name = "e2", help = "Jump to state E2 (EVCC setup mode)")]
-    JumpToE2,
-    #[value(name = "f1", help = "Jump to state F1 (Trigger RCD trip test)")]
-    JumpToF1,
-    #[value(name = "lid20a", help = "Enable 20A Load Imbalance Detection")]
-    EnableLoadImbalance20A,
-}
-
-#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TimeoutOption {
-    NoChange,
-    Disabled,
-    Enabled,
-}
-
-#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PowerCycleOption {
-    NoChange,
-    EnterB2IfConnected,
-    StopInB1IfConnected,
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
@@ -151,53 +121,23 @@ pub enum Commands {
         mode: DaemonOutput,
     },
 
-    /// Read all measurement values (currents, state, voltages)
+    /// Read all measurement and status values (Registers 256, 257, 258)
     ReadAll,
 
-    /// Read all configuration settings
-    ReadAllSettings,
+    /// Read vehicle charging status (Register 256 / 0x0100)
+    ReadStatus,
 
-    /// Read EV current and status values (Register 0x002E)
-    ReadCurrent {
-        /// Resolution: 'full' (0.1A) or 'short' (1A)
-        #[arg(long, default_value = "full")]
-        resolution: String,
-    },
+    /// Read maximum charging current setting / status (Register 257 / 0x0101)
+    ReadCurrent,
 
-    /// Read device ID, firmware revision, hardware and config (Register 0x0001)
-    ReadDeviceInfo,
+    /// Read active charging power / current (Register 258 / 0x0102)
+    ReadPower,
 
-    /// Read Modbus baud rate, parity, and stop bit settings (Register 0x0003)
-    ReadModbusSettings,
-
-    /// Read system and diagnostic flags (Register 0x0006)
-    ReadSystemFlags,
-
-    /// Set maximum charging current Icmax in Amperes (Register 0x0014)
+    /// Set maximum charging current in Amperes (Register 257 / 0x0101)
     SetCurrent {
-        /// Current in Amperes (6.0 - 80.0)
+        /// Current in Amperes (0 to disable/stop, or 6 to 80)
         #[arg(value_parser = parse_current)]
-        amperes: f32,
-    },
-
-    /// Modify state of outlet (Register 0x0005)
-    SetState {
-        /// Action to perform
-        #[arg(value_enum)]
-        action: StateAction,
-    },
-
-    /// Set Device ID and configure power-cycle / timeout behavior (Register 0x002C)
-    SetDeviceId {
-        /// New Device ID to assign (1..=16)
-        #[arg(value_parser = parse_address)]
-        new_device_id: u8,
-        /// Upstream timeout behavior
-        #[arg(long, value_enum, default_value = "no-change")]
-        timeout: TimeoutOption,
-        /// Behavior after power cycle when EV connected
-        #[arg(long, value_enum, default_value = "no-change")]
-        power_cycle: PowerCycleOption,
+        amperes: u16,
     },
 }
 
@@ -206,13 +146,16 @@ pub enum FrameCommands {
     /// Encode a Modbus ASCII read frame
     EncodeRead {
         device_id: u8,
+        #[arg(default_value = "256")]
         start_register: String,
+        #[arg(default_value = "1")]
         qty: u16,
     },
-    /// Encode a Modbus ASCII write-current frame
+    /// Encode a Modbus ASCII write-current frame (Register 257)
     EncodeWriteCurrent {
         device_id: u8,
-        amperes: f32,
+        #[arg(value_parser = parse_current)]
+        amperes: u16,
     },
     /// Decode a Modbus ASCII frame string
     Decode {
@@ -221,7 +164,7 @@ pub enum FrameCommands {
 }
 
 const fn about_text() -> &'static str {
-    "ABL EVCC2/3 wallbox command line tool"
+    "ABL EVCC1 wallbox command line tool"
 }
 
 #[derive(Parser, Debug)]

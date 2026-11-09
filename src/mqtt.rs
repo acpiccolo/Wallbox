@@ -234,13 +234,13 @@ impl MqttPublisher {
             };
         }
 
-        let cur = &values.current_full;
-        pub_msg!("state", format!("{:#04X}", cur.evse_state));
-        pub_msg!("ev_connected", cur.ucp_le_10v);
-        pub_msg!("duty_cycle_percent", (cur.duty_cycle_ic_x10 as f32) / 10.0);
-        pub_msg!("l1_current", (cur.ict1_x10_decia as f32) / 10.0);
-        pub_msg!("l2_current", (cur.ict2_x10_decia as f32) / 10.0);
-        pub_msg!("l3_current", (cur.ict3_x10_decia as f32) / 10.0);
+        // EVCC1 topics: status, status_code, max_current, power_or_current
+        pub_msg!("status", values.status.0.as_char());
+        pub_msg!("status_description", values.status.0.description());
+        pub_msg!("status_code", values.status.0.raw_code());
+        pub_msg!("max_current", values.max_current.0);
+        pub_msg!("enabled", values.max_current.is_enabled());
+        pub_msg!("power_or_current", values.power_or_current.0);
 
         if !no_json {
             let payload = serde_json::to_string(values)?;

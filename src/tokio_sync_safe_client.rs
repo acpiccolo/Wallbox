@@ -1,86 +1,50 @@
-//! Thread-safe synchronous client wrapper for the ABL EVCC2/3 charge controller.
+//! Thread-safe synchronous client wrapper for the ABL EVCC1 charge controller.
 
 use crate::{
-    protocol as proto,
-    tokio_common::{AllSettings, AllValues, Result},
+    protocol::{self as proto},
+    tokio_common::{AllValues, Result},
     tokio_sync::EVCC,
 };
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
-use tokio_modbus::client::sync::Context;
+use std::{sync::Mutex, time::Duration};
 
-#[derive(Clone)]
 pub struct SafeClient {
-    ctx: Arc<Mutex<Context>>,
+    context: Mutex<tokio_modbus::client::sync::Context>,
 }
 
 impl SafeClient {
-    /// Creates a new `SafeClient` wrapping a synchronous Modbus context.
-    pub fn new(ctx: Context) -> Self {
+    pub fn new(context: tokio_modbus::client::sync::Context) -> Self {
         Self {
-            ctx: Arc::new(Mutex::new(ctx)),
+            context: Mutex::new(context),
         }
     }
 
-    /// Read device ID, firmware revision, hardware config
-    pub fn read_device_info(&mut self) -> Result<proto::DeviceIdAndFirmwareRevision> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::read_device_info(&mut ctx)
+    /// Read vehicle charging status (Register 256 / 0x0100)
+    pub fn read_status(&self) -> Result<proto::ChargeStatus> {
+        let mut ctx = self.context.lock().unwrap();
+        EVCC::read_status(&mut ctx)
     }
 
-    /// Read Modbus baud rate, parity, stop bits
-    pub fn read_modbus_settings(&mut self) -> Result<proto::ModbusSettings> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::read_modbus_settings(&mut ctx)
+    /// Read maximum charging current setting / status (Register 257 / 0x0101)
+    pub fn read_current(&self) -> Result<proto::ChargingCurrent> {
+        let mut ctx = self.context.lock().unwrap();
+        EVCC::read_current(&mut ctx)
     }
 
-    /// Read system flags
-    pub fn read_system_flags(&mut self) -> Result<proto::SystemFlags> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::read_system_flags(&mut ctx)
+    /// Set maximum charging current in Amperes (Register 257 / 0x0101)
+    pub fn set_current(&self, current: proto::ChargingCurrent) -> Result<()> {
+        let mut ctx = self.context.lock().unwrap();
+        EVCC::set_current(&mut ctx, current)
     }
 
-    /// Read current and status (full 0.1A resolution)
-    pub fn read_current_full(&mut self) -> Result<proto::ReadCurrentFull> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::read_current_full(&mut ctx)
-    }
-
-    /// Read current and status (1A resolution)
-    pub fn read_current_amps(&mut self) -> Result<proto::ReadCurrentAmps> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::read_current_amps(&mut ctx)
-    }
-
-    /// Set charging current Icmax
-    pub fn set_current(&mut self, icmax: proto::SetIcmax) -> Result<()> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::set_current(&mut ctx, icmax)
-    }
-
-    /// Modify state
-    pub fn set_state(&mut self, action: proto::ModifyStateAction) -> Result<()> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::set_state(&mut ctx, action)
-    }
-
-    /// Set device ID
-    pub fn set_device_id(&mut self, config: proto::SetDeviceId) -> Result<()> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::set_device_id(&mut ctx, config)
+    /// Read active power or current (Register 258 / 0x0102)
+    pub fn read_power_or_current(&self) -> Result<proto::PowerOrCurrent> {
+        let mut ctx = self.context.lock().unwrap();
+        EVCC::read_power_or_current(&mut ctx)
     }
 
     /// Read all measurement values in batch
-    pub fn read_all(&mut self, delay: &Duration) -> Result<AllValues> {
-        let mut ctx = self.ctx.lock().unwrap();
+    pub fn read_all(&self, delay: &Duration) -> Result<AllValues> {
+        let mut ctx = self.context.lock().unwrap();
         EVCC::read_all(&mut ctx, delay)
-    }
-
-    /// Read all settings in batch
-    pub fn read_all_settings(&mut self, delay: &Duration) -> Result<AllSettings> {
-        let mut ctx = self.ctx.lock().unwrap();
-        EVCC::read_all_settings(&mut ctx, delay)
     }
 }

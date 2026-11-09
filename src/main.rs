@@ -88,122 +88,43 @@ fn handle_commands(
                 println!("{}", serde_json::to_string_pretty(&values)?);
             }
         }
-        commandline::Commands::ReadAllSettings => {
-            let settings = client
-                .read_all_settings(delay)
-                .with_context(|| "Cannot read all settings")?;
+        commandline::Commands::ReadStatus => {
+            let status = client
+                .read_status()
+                .with_context(|| "Cannot read vehicle charging status")?;
             if no_json {
-                println!("{settings}");
+                println!("{status}");
             } else {
-                println!("{}", serde_json::to_string_pretty(&settings)?);
+                println!("{}", serde_json::to_string_pretty(&status)?);
             }
         }
-        commandline::Commands::ReadCurrent { resolution } => {
-            if resolution.to_lowercase() == "short" {
-                let cur = client
-                    .read_current_amps()
-                    .with_context(|| "Cannot read current amps")?;
-                if no_json {
-                    println!("{cur}");
-                } else {
-                    println!("{}", serde_json::to_string_pretty(&cur)?);
-                }
+        commandline::Commands::ReadCurrent => {
+            let current = client
+                .read_current()
+                .with_context(|| "Cannot read charging current")?;
+            if no_json {
+                println!("{current}");
             } else {
-                let cur = client
-                    .read_current_full()
-                    .with_context(|| "Cannot read current full")?;
-                if no_json {
-                    println!("{cur}");
-                } else {
-                    println!("{}", serde_json::to_string_pretty(&cur)?);
-                }
+                println!("{}", serde_json::to_string_pretty(&current)?);
             }
         }
-        commandline::Commands::ReadDeviceInfo => {
-            let info = client
-                .read_device_info()
-                .with_context(|| "Cannot read device info")?;
+        commandline::Commands::ReadPower => {
+            let power = client
+                .read_power_or_current()
+                .with_context(|| "Cannot read power or current")?;
             if no_json {
-                println!("{info}");
+                println!("{power}");
             } else {
-                println!("{}", serde_json::to_string_pretty(&info)?);
-            }
-        }
-        commandline::Commands::ReadModbusSettings => {
-            let settings = client
-                .read_modbus_settings()
-                .with_context(|| "Cannot read modbus settings")?;
-            if no_json {
-                println!("{settings}");
-            } else {
-                println!("{}", serde_json::to_string_pretty(&settings)?);
-            }
-        }
-        commandline::Commands::ReadSystemFlags => {
-            let flags = client
-                .read_system_flags()
-                .with_context(|| "Cannot read system flags")?;
-            if no_json {
-                println!("{flags:#?}");
-            } else {
-                println!("{}", serde_json::to_string_pretty(&flags)?);
+                println!("{}", serde_json::to_string_pretty(&power)?);
             }
         }
         commandline::Commands::SetCurrent { amperes } => {
-            let dc_val = (amperes * 100.0 / 6.0).round() as u16;
-            let duty_cycle_x10 = dc_val.clamp(80, 1000);
-            let icmax = proto::SetIcmax::new(duty_cycle_x10)
-                .with_context(|| "Cannot construct SetIcmax")?;
+            let current = proto::ChargingCurrent::new(*amperes)
+                .with_context(|| format!("Invalid charging current value: {amperes}A"))?;
             client
-                .set_current(icmax)
-                .with_context(|| "Cannot set charging current")?;
-            println!(
-                "Charging current successfully set to: {}A (Duty Cycle: {:.1}%)",
-                amperes,
-                duty_cycle_x10 as f32 / 10.0
-            );
-        }
-        commandline::Commands::SetState { action } => {
-            let proto_action = match action {
-                commandline::StateAction::Reset => proto::ModifyStateAction::Reset,
-                commandline::StateAction::JumpToA1 => proto::ModifyStateAction::JumpToA1,
-                commandline::StateAction::JumpToE0 => proto::ModifyStateAction::JumpToE0,
-                commandline::StateAction::JumpToE2 => proto::ModifyStateAction::JumpToE2,
-                commandline::StateAction::JumpToF1 => proto::ModifyStateAction::JumpToF1,
-                commandline::StateAction::EnableLoadImbalance20A => {
-                    proto::ModifyStateAction::LoadImbalanceDetection20AEnabled
-                }
-            };
-            client
-                .set_state(proto_action)
-                .with_context(|| "Cannot set state")?;
-            println!("Outlet state successfully modified to: {:?}", action);
-        }
-        commandline::Commands::SetDeviceId {
-            new_device_id,
-            timeout,
-            power_cycle,
-        } => {
-            let ut = match timeout {
-                commandline::TimeoutOption::NoChange => proto::UpstreamTimeoutOption::NoChange,
-                commandline::TimeoutOption::Disabled => proto::UpstreamTimeoutOption::Disabled,
-                commandline::TimeoutOption::Enabled => proto::UpstreamTimeoutOption::Enabled,
-            };
-            let pc = match power_cycle {
-                commandline::PowerCycleOption::NoChange => proto::PowerCycleB1B2Option::NoChange,
-                commandline::PowerCycleOption::EnterB2IfConnected => {
-                    proto::PowerCycleB1B2Option::EnterB2IfConnected
-                }
-                commandline::PowerCycleOption::StopInB1IfConnected => {
-                    proto::PowerCycleB1B2Option::StopInB1IfConnected
-                }
-            };
-            let set_cmd = proto::SetDeviceId::new(*new_device_id, ut, pc)
-                .with_context(|| "Cannot create SetDeviceId")?;
-            client
-                .set_device_id(set_cmd)
-                .with_context(|| "Cannot set device ID")?;
-            println!("Device ID successfully changed to: {}", new_device_id);
+                .set_current(current)
+                .with_context(|| format!("Cannot set charging current to {amperes}A"))?;
+            println!("Charging current successfully set to: {current}");
         }
     }
     Ok(())
@@ -231,14 +152,12 @@ fn handle_frame_commands(cmd: &commandline::FrameCommands) -> Result<()> {
             device_id,
             amperes,
         } => {
-            let dc_val = (amperes * 100.0 / 6.0).round() as u16;
-            let duty_cycle_x10 = dc_val.clamp(80, 1000);
-            let icmax = proto::SetIcmax::new(duty_cycle_x10)?;
+            let current = proto::ChargingCurrent::new(*amperes)?;
             let mut payload = Vec::new();
-            payload.extend_from_slice(&proto::SetIcmax::ADDRESS.to_be_bytes());
+            payload.extend_from_slice(&proto::ChargingCurrent::ADDRESS.to_be_bytes());
             payload.extend_from_slice(&1u16.to_be_bytes());
             payload.push(2);
-            payload.extend_from_slice(&icmax.encode_to_word().to_be_bytes());
+            payload.extend_from_slice(&current.encode_to_word().to_be_bytes());
             let frame = proto::encode_ascii_frame(*device_id, 0x10, &payload, ':');
             print!("{frame}");
         }
