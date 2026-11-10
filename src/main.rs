@@ -261,11 +261,12 @@ fn main() -> Result<()> {
         }
         commandline::Connection::Serial {
             device,
+            tcp,
             baud_rate,
             address,
             command,
         } => {
-            handle_serial_commands(device, *baud_rate, *address, command, args.timeout)?;
+            handle_serial_commands(device.as_deref(), tcp.as_deref(), *baud_rate, *address, command, args.timeout)?;
         }
     }
 
@@ -273,7 +274,8 @@ fn main() -> Result<()> {
 }
 
 fn handle_serial_commands(
-    device: &str,
+    device: Option<&str>,
+    tcp_addr: Option<&str>,
     baud_rate: u32,
     address: u8,
     command: &commandline::EvccSerialCommands,
@@ -336,21 +338,52 @@ fn handle_serial_commands(
     };
 
     let req = proto::encode_evcc_request(address, cmd, param_opt);
-    trace!("Opening serial device {device} at {baud_rate} 8N1");
-    let mut port = tokio_serial::new(device, baud_rate)
-        .parity(tokio_serial::Parity::None)
-        .stop_bits(tokio_serial::StopBits::One)
-        .data_bits(tokio_serial::DataBits::Eight)
-        .timeout(timeout)
-        .open()
-        .with_context(|| format!("Cannot open serial device {device}"))?;
+
+    // Communicate over either transparent TCP socket or serial RS485 port
+    let mut stream = match (device, tcp_addr) {
+        (Some(_), Some(_)) => anyhow::bail!("Cannot specify both --device and --tcp. Choose one transport."),
+        (None, None) => {
+            let default_dev = if cfg!(target_os = "windows") { "COM1" } else { "/dev/ttyUSB0" };
+            trace!("Defaulting to serial device {default_dev} at {baud_rate} 8N1");
+            let port = tokio_serial::new(default_dev, baud_rate)
+                .parity(tokio_serial::Parity::None)
+                .stop_bits(tokio_serial::StopBits::One)
+                .data_bits(tokio_serial::DataBits::Eight)
+                .timeout(timeout)
+                .open()
+                .with_context(|| format!("Cannot open serial device {default_dev}"))?;
+            Stream::Serial(port)
+        }
+        (Some(dev), None) => {
+            trace!("Opening serial device {dev} at {baud_rate} 8N1");
+            let port = tokio_serial::new(dev, baud_rate)
+                .parity(tokio_serial::Parity::None)
+                .stop_bits(tokio_serial::StopBits::One)
+                .data_bits(tokio_serial::DataBits::Eight)
+                .timeout(timeout)
+                .open()
+                .with_context(|| format!("Cannot open serial device {dev}"))?;
+            Stream::Serial(port)
+        }
+        (None, Some(tcp)) => {
+            trace!("Connecting to transparent TCP bridge {tcp}");
+            let socket_addr: std::net::SocketAddr = tcp
+                .parse()
+                .with_context(|| format!("Cannot parse TCP address: {tcp}"))?;
+            let tcp_stream = std::net::TcpStream::connect_timeout(&socket_addr, timeout)
+                .with_context(|| format!("Cannot connect to TCP endpoint {tcp}"))?;
+            tcp_stream.set_read_timeout(Some(timeout))?;
+            tcp_stream.set_write_timeout(Some(timeout))?;
+            Stream::Tcp(tcp_stream)
+        }
+    };
 
     trace!("Sending: {:?}", req);
-    port.write_all(req.as_bytes())
-        .with_context(|| format!("Failed to write to {device}"))?;
-    port.flush().with_context(|| "Failed to flush serial port")?;
+    stream.write_all(req.as_bytes())
+        .with_context(|| "Failed to write request to EVCC controller")?;
+    stream.flush().with_context(|| "Failed to flush stream")?;
 
-    let mut reader = BufReader::new(port);
+    let mut reader = BufReader::new(stream);
     let mut reply = String::new();
     reader
         .read_line(&mut reply)
@@ -385,4 +418,34 @@ fn handle_serial_commands(
     }
 
     Ok(())
+}
+
+enum Stream {
+    Serial(Box<dyn tokio_serial::SerialPort>),
+    Tcp(std::net::TcpStream),
+}
+
+impl std::io::Read for Stream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Serial(s) => s.read(buf),
+            Self::Tcp(t) => t.read(buf),
+        }
+    }
+}
+
+impl std::io::Write for Stream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Serial(s) => s.write(buf),
+            Self::Tcp(t) => t.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Serial(s) => s.flush(),
+            Self::Tcp(t) => t.flush(),
+        }
+    }
 }

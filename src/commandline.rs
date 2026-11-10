@@ -97,11 +97,15 @@ pub enum Connection {
     },
     /// Native EVCC serial ASCII communication (!n cc [param]) from docs/EVCC.pdf
     Serial {
-        /// Serial device path (e.g. /dev/ttyUSB0 or COM1)
-        #[arg(short, long, default_value_t = default_device_name())]
-        device: String,
+        /// Serial device path (e.g. /dev/ttyUSB0 or COM1, mutually exclusive with --tcp)
+        #[arg(short, long)]
+        device: Option<String>,
 
-        /// Baud rate (fixed at 38400 for native ABL EVCC)
+        /// TCP address of transparent RS485-to-Ethernet adapter (e.g. 192.168.1.100:4196)
+        #[arg(long)]
+        tcp: Option<String>,
+
+        /// Baud rate for serial device (default: 38400 for native ABL EVCC)
         #[arg(long, default_value = "38400")]
         baud_rate: u32,
 
