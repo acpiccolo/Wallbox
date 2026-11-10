@@ -171,18 +171,18 @@ pub fn bytes_to_words(bytes: &[u8]) -> Vec<Word> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum VehicleStatus {
-    /// ASCII 65 ('A'): Standby / Ready (No vehicle connected)
-    ReadyA,
-    /// ASCII 66 ('B'): Vehicle connected, waiting for charge enable
-    ConnectedB,
-    /// ASCII 67 ('C'): Charging in progress
-    ChargingC,
-    /// ASCII 68 ('D'): Charging with ventilation
-    VentilationD,
-    /// ASCII 69 ('E'): No power / disconnected / disabled
-    DisabledE,
-    /// ASCII 70 ('F'): Fault / Error
-    FaultF,
+    /// Standby / Ready (No vehicle connected) - ASCII 65 ('A')
+    Ready,
+    /// Vehicle connected, waiting for charge enable - ASCII 66 ('B')
+    Connected,
+    /// Charging in progress - ASCII 67 ('C')
+    Charging,
+    /// Charging with external ventilation - ASCII 68 ('D')
+    Ventilation,
+    /// No power / disconnected / disabled - ASCII 69 ('E')
+    Disabled,
+    /// Fault / Error condition - ASCII 70 ('F')
+    Fault,
     /// Other status value
     Other(u16),
 }
@@ -199,24 +199,24 @@ impl VehicleStatus {
         };
 
         match ascii_code {
-            65 => Self::ReadyA,
-            66 => Self::ConnectedB,
-            67 => Self::ChargingC,
-            68 => Self::VentilationD,
-            69 => Self::DisabledE,
-            70 => Self::FaultF,
+            65 => Self::Ready,
+            66 => Self::Connected,
+            67 => Self::Charging,
+            68 => Self::Ventilation,
+            69 => Self::Disabled,
+            70 => Self::Fault,
             other => Self::Other(other),
         }
     }
 
     pub fn as_char(&self) -> char {
         match self {
-            Self::ReadyA => 'A',
-            Self::ConnectedB => 'B',
-            Self::ChargingC => 'C',
-            Self::VentilationD => 'D',
-            Self::DisabledE => 'E',
-            Self::FaultF => 'F',
+            Self::Ready => 'A',
+            Self::Connected => 'B',
+            Self::Charging => 'C',
+            Self::Ventilation => 'D',
+            Self::Disabled => 'E',
+            Self::Fault => 'F',
             Self::Other(val) => {
                 if *val >= 32 && *val <= 126 {
                     (*val as u8) as char
@@ -229,24 +229,24 @@ impl VehicleStatus {
 
     pub fn raw_code(&self) -> u16 {
         match self {
-            Self::ReadyA => 65,
-            Self::ConnectedB => 66,
-            Self::ChargingC => 67,
-            Self::VentilationD => 68,
-            Self::DisabledE => 69,
-            Self::FaultF => 70,
+            Self::Ready => 65,
+            Self::Connected => 66,
+            Self::Charging => 67,
+            Self::Ventilation => 68,
+            Self::Disabled => 69,
+            Self::Fault => 70,
             Self::Other(val) => *val,
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            Self::ReadyA => "Standby / Bereit (kein Fahrzeug verbunden)",
-            Self::ConnectedB => "Fahrzeug verbunden (wartet auf Ladefreigabe)",
-            Self::ChargingC => "Ladevorgang aktiv (Fahrzeug lädt)",
-            Self::VentilationD => "Ladevorgang mit externer Belüftung",
-            Self::DisabledE => "Ladepunkt deaktiviert / Ausgeschaltet",
-            Self::FaultF => "Fehlerzustand (Fault / Error)",
+            Self::Ready => "Standby / Bereit (kein Fahrzeug verbunden)",
+            Self::Connected => "Fahrzeug verbunden (wartet auf Ladefreigabe)",
+            Self::Charging => "Ladevorgang aktiv (Fahrzeug lädt)",
+            Self::Ventilation => "Ladevorgang mit externer Belüftung",
+            Self::Disabled => "Ladepunkt deaktiviert / Ausgeschaltet",
+            Self::Fault => "Fehlerzustand (Fault / Error)",
             Self::Other(_) => "Unbekannter Status",
         }
     }
@@ -372,4 +372,207 @@ impl std::fmt::Display for PowerOrCurrent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Wert: {}", self.0)
     }
+}
+
+// =============================================================================
+// ABL SURSUM EVCC Native Serial ASCII Protocol (as documented in docs/EVCC.pdf)
+// =============================================================================
+
+/// Command codes for the serial ASCII protocol documented in docs/EVCC.pdf
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum EvccCommand {
+    /// 00: Reset (Parameter: 1111)
+    Reset,
+    /// 01: Abfrage Firmware (Antwort: Vx.y)
+    GetFirmware,
+    /// 02: Abfrage Zustand (0000=A, 0004=B2, 0005=C, 0006=D, 0009=B', 0013=B1, 0017=A', 0033=Fehler CS, etc.)
+    GetStatus,
+    /// 03: Wechsel zu MANUAL
+    SwitchToManual,
+    /// 04: Zustand Ausgänge
+    GetOutputStatus,
+    /// 05: Ausgang einschalten (Parameter: xxxx)
+    SetOutput,
+    /// 06: Ausgang ausschalten (Parameter: xxxx)
+    ClearOutput,
+    /// 07: Abfrage ADC-Wert pos. U_CP
+    GetAdcPosUcp,
+    /// 08: Abfrage ADC-Wert neg. U_CP
+    GetAdcNegUcp,
+    /// 09: Abfrage ADC-Wert U_CS
+    GetAdcUcs,
+    /// 10: Abfrage Eingänge (E1, E2)
+    GetInputs,
+    /// 11: Abfrage aktuelle PWM (in 0.1%-Schritten)
+    GetPresentPwm,
+    /// 12: PWM setzen (Ladestrom)
+    SetPwm,
+    /// 13: PWM einschalten
+    EnablePwm,
+    /// 14: PWM ausschalten
+    DisablePwm,
+    /// 15: Default-PWM setzen
+    SetDefaultPwm,
+    /// 16: Merker "Belüftung" setzen (1110 = angeschlossen, 1111 = keine Belüftung)
+    SetVentilationMarker,
+    /// 17: Abfrage Merker "Belüftung"
+    GetVentilationMarker,
+    /// 22: Moduladresse setzen (111x)
+    SetModuleAddress,
+    /// 23: Abfrage Moduladresse (0..8)
+    GetModuleAddress,
+    /// 24: Werkseinstellung laden und Reset (1111)
+    LoadFactorySettingsAndReset,
+    /// 25: Laden beenden oder MANUAL verlassen
+    StopChargingOrLeaveManual,
+    /// 26: Abfrage Default-PWM
+    GetDefaultPwm,
+    /// 27: bBreakCharge setzen
+    SetBreakCharge,
+    /// 28: bBreakCharge löschen
+    ClearBreakCharge,
+    /// 29: Abfrage bBreakCharge
+    GetBreakCharge,
+    /// 30: Sprung zu Zustand A'
+    SwitchToAPrime,
+    /// 31: Verlassen A' (Sprung nach Zustand A)
+    LeaveAPrime,
+    /// Other command code
+    Other(u8),
+}
+
+impl EvccCommand {
+    pub fn code(&self) -> u8 {
+        match self {
+            Self::Reset => 0,
+            Self::GetFirmware => 1,
+            Self::GetStatus => 2,
+            Self::SwitchToManual => 3,
+            Self::GetOutputStatus => 4,
+            Self::SetOutput => 5,
+            Self::ClearOutput => 6,
+            Self::GetAdcPosUcp => 7,
+            Self::GetAdcNegUcp => 8,
+            Self::GetAdcUcs => 9,
+            Self::GetInputs => 10,
+            Self::GetPresentPwm => 11,
+            Self::SetPwm => 12,
+            Self::EnablePwm => 13,
+            Self::DisablePwm => 14,
+            Self::SetDefaultPwm => 15,
+            Self::SetVentilationMarker => 16,
+            Self::GetVentilationMarker => 17,
+            Self::SetModuleAddress => 22,
+            Self::GetModuleAddress => 23,
+            Self::LoadFactorySettingsAndReset => 24,
+            Self::StopChargingOrLeaveManual => 25,
+            Self::GetDefaultPwm => 26,
+            Self::SetBreakCharge => 27,
+            Self::ClearBreakCharge => 28,
+            Self::GetBreakCharge => 29,
+            Self::SwitchToAPrime => 30,
+            Self::LeaveAPrime => 31,
+            Self::Other(c) => *c,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            0 => Self::Reset,
+            1 => Self::GetFirmware,
+            2 => Self::GetStatus,
+            3 => Self::SwitchToManual,
+            4 => Self::GetOutputStatus,
+            5 => Self::SetOutput,
+            6 => Self::ClearOutput,
+            7 => Self::GetAdcPosUcp,
+            8 => Self::GetAdcNegUcp,
+            9 => Self::GetAdcUcs,
+            10 => Self::GetInputs,
+            11 => Self::GetPresentPwm,
+            12 => Self::SetPwm,
+            13 => Self::EnablePwm,
+            14 => Self::DisablePwm,
+            15 => Self::SetDefaultPwm,
+            16 => Self::SetVentilationMarker,
+            17 => Self::GetVentilationMarker,
+            22 => Self::SetModuleAddress,
+            23 => Self::GetModuleAddress,
+            24 => Self::LoadFactorySettingsAndReset,
+            25 => Self::StopChargingOrLeaveManual,
+            26 => Self::GetDefaultPwm,
+            27 => Self::SetBreakCharge,
+            28 => Self::ClearBreakCharge,
+            29 => Self::GetBreakCharge,
+            30 => Self::SwitchToAPrime,
+            31 => Self::LeaveAPrime,
+            c => Self::Other(c),
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Reset => "Reset",
+            Self::GetFirmware => "Get firmware",
+            Self::GetStatus => "Get status",
+            Self::SwitchToManual => "Switch to MANUAL",
+            Self::GetOutputStatus => "Status output",
+            Self::SetOutput => "Set output",
+            Self::ClearOutput => "Clear output",
+            Self::GetAdcPosUcp => "Get ADC value pos. U_CP",
+            Self::GetAdcNegUcp => "Get ADC value neg. U_CP",
+            Self::GetAdcUcs => "Get ADC value U_CS",
+            Self::GetInputs => "Get input",
+            Self::GetPresentPwm => "Get present PWM",
+            Self::SetPwm => "Set PWM",
+            Self::EnablePwm => "PWM enabled",
+            Self::DisablePwm => "PWM disabled",
+            Self::SetDefaultPwm => "Set default PWM",
+            Self::SetVentilationMarker => "Set marker ventilation",
+            Self::GetVentilationMarker => "Get marker ventilation",
+            Self::SetModuleAddress => "Set address of module",
+            Self::GetModuleAddress => "Get address of module",
+            Self::LoadFactorySettingsAndReset => "Load factory settings and reset",
+            Self::StopChargingOrLeaveManual => "Stop charging or leave MANUAL",
+            Self::GetDefaultPwm => "Get default PWM",
+            Self::SetBreakCharge => "Set bBreakCharge",
+            Self::ClearBreakCharge => "Clear bBreakCharge",
+            Self::GetBreakCharge => "Get bBreakCharge",
+            Self::SwitchToAPrime => "Switch to A'",
+            Self::LeaveAPrime => "Leave A'",
+            Self::Other(_) => "Custom command",
+        }
+    }
+}
+
+/// Encode an EVCC serial request line: `!n cc [parameter]\r\n`
+pub fn encode_evcc_request(address: u8, cmd: EvccCommand, param: Option<&str>) -> String {
+    match param {
+        Some(p) if !p.trim().is_empty() => format!("!{} {:02} {}\r\n", address, cmd.code(), p.trim()),
+        _ => format!("!{} {:02}\r\n", address, cmd.code()),
+    }
+}
+
+/// Parse an EVCC serial reply line: `>n cc[ parameter]\r\n`
+pub fn parse_evcc_reply(line: &str) -> Result<(u8, u8, Option<String>), Error> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('>') {
+        return Err(Error::InvalidFrame);
+    }
+    let content = &trimmed[1..];
+    let parts: Vec<&str> = content.split_whitespace().collect();
+    if parts.len() < 2 {
+        return Err(Error::InvalidFrame);
+    }
+
+    let addr = parts[0].parse::<u8>().map_err(|_| Error::InvalidValue)?;
+    let cmd = parts[1].parse::<u8>().map_err(|_| Error::InvalidValue)?;
+    let param = if parts.len() > 2 {
+        Some(parts[2..].join(" "))
+    } else {
+        None
+    };
+
+    Ok((addr, cmd, param))
 }

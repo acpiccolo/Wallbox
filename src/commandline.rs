@@ -161,6 +161,17 @@ pub enum FrameCommands {
     Decode {
         frame: String,
     },
+    /// Encode an EVCC serial ASCII request (!n cc [param]) from docs/EVCC.pdf
+    EncodeEvccRequest {
+        address: u8,
+        command_code: u8,
+        #[arg(default_value = "")]
+        parameter: String,
+    },
+    /// Decode an EVCC serial ASCII reply (>n cc [param]) from docs/EVCC.pdf
+    DecodeEvccReply {
+        line: String,
+    },
 }
 
 const fn about_text() -> &'static str {

@@ -169,6 +169,30 @@ fn handle_frame_commands(cmd: &commandline::FrameCommands) -> Result<()> {
             let hex_payload: Vec<String> = payload.iter().map(|b| format!("{:02X}", b)).collect();
             println!("  Payload: {}", hex_payload.join(""));
         }
+        commandline::FrameCommands::EncodeEvccRequest {
+            address,
+            command_code,
+            parameter,
+        } => {
+            let cmd = proto::EvccCommand::from_code(*command_code);
+            let param_opt = if parameter.is_empty() {
+                None
+            } else {
+                Some(parameter.as_str())
+            };
+            let line = proto::encode_evcc_request(*address, cmd, param_opt);
+            print!("{line}");
+        }
+        commandline::FrameCommands::DecodeEvccReply { line } => {
+            let (addr, cmd_code, param) = proto::parse_evcc_reply(line)?;
+            let cmd = proto::EvccCommand::from_code(cmd_code);
+            println!("Decoded EVCC Serial Reply:");
+            println!("  Module Address: {}", addr);
+            println!("  Command: {:02} ({})", cmd_code, cmd.name());
+            if let Some(p) = param {
+                println!("  Parameter: {}", p);
+            }
+        }
     }
     Ok(())
 }

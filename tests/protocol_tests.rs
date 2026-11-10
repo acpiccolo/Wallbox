@@ -31,24 +31,24 @@ mod tests {
     fn test_register_256_vehicle_status_ascii() {
         // 65: 'A'
         let status_a = ChargeStatus::decode_from_words(&[65]).unwrap();
-        assert_eq!(status_a.0, VehicleStatus::ReadyA);
+        assert_eq!(status_a.0, VehicleStatus::Ready);
         assert_eq!(status_a.0.as_char(), 'A');
         assert_eq!(status_a.0.raw_code(), 65);
 
         // 66: 'B'
         let status_b = ChargeStatus::decode_from_words(&[66]).unwrap();
-        assert_eq!(status_b.0, VehicleStatus::ConnectedB);
+        assert_eq!(status_b.0, VehicleStatus::Connected);
         assert_eq!(status_b.0.as_char(), 'B');
         assert_eq!(status_b.0.raw_code(), 66);
 
         // 67: 'C'
         let status_c = ChargeStatus::decode_from_words(&[67]).unwrap();
-        assert_eq!(status_c.0, VehicleStatus::ChargingC);
+        assert_eq!(status_c.0, VehicleStatus::Charging);
         assert_eq!(status_c.0.as_char(), 'C');
 
         // Upper-byte encoded ASCII 'B' (0x4200)
         let status_b_upper = ChargeStatus::decode_from_words(&[0x4200]).unwrap();
-        assert_eq!(status_b_upper.0, VehicleStatus::ConnectedB);
+        assert_eq!(status_b_upper.0, VehicleStatus::Connected);
 
         // Other status
         let status_other = ChargeStatus::decode_from_words(&[999]).unwrap();
@@ -82,5 +82,29 @@ mod tests {
         let val = PowerOrCurrent::decode_from_words(&[3680]).unwrap();
         assert_eq!(val.raw(), 3680);
         assert_eq!(val.to_string(), "Wert: 3680");
+    }
+
+    #[test]
+    fn test_evcc_serial_commands_docs() {
+        // Test encoding commands from docs/EVCC.pdf
+        assert_eq!(encode_evcc_request(1, EvccCommand::GetFirmware, None), "!1 01\r\n");
+        assert_eq!(encode_evcc_request(1, EvccCommand::SetPwm, Some("0016")), "!1 12 0016\r\n");
+        assert_eq!(encode_evcc_request(0, EvccCommand::Reset, Some("1111")), "!0 00 1111\r\n");
+
+        // Test decoding replies
+        let (addr, cmd, param): (u8, u8, Option<String>) = parse_evcc_reply(">1 01 V2.3\r\n").unwrap();
+        assert_eq!(addr, 1);
+        assert_eq!(cmd, 1);
+        assert_eq!(param.as_deref(), Some("V2.3"));
+
+        let (addr, cmd, param): (u8, u8, Option<String>) = parse_evcc_reply(">1 02 0005\r\n").unwrap();
+        assert_eq!(addr, 1);
+        assert_eq!(cmd, 2);
+        assert_eq!(param.as_deref(), Some("0005"));
+
+        let (addr, cmd, param): (u8, u8, Option<String>) = parse_evcc_reply(">1 12\r\n").unwrap();
+        assert_eq!(addr, 1);
+        assert_eq!(cmd, 12);
+        assert_eq!(param, None);
     }
 }
