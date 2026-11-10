@@ -121,13 +121,22 @@ pub enum Commands {
     ReadStatus,
     /// Read configured charging current limit / duty cycle (Register 0x0014)
     ReadCurrent,
-    /// Set maximum charging current in Amperes (0 to halt/disable, 6 to 80)
+    /// Set maximum charging current in Amperes per phase (0 to halt/disable, 6 to 80)
     SetCurrent {
-        /// Current in Amperes (0 to disable/stop, or 6 to 80)
+        /// Current in Amperes per phase (0 to disable/stop, or 6 to 80)
         #[arg(value_parser = parse_current)]
         amperes: u16,
 
         /// Skip confirmation when setting 0A (stopping charging)
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Set maximum charging power in Watts total for 3 phases (converts to Amperes per phase at 3x230V)
+    SetPower {
+        /// Total 3-phase charging power in Watts (e.g. 11000 for 11kW = 16A, 0 to stop)
+        watts: u32,
+
+        /// Skip confirmation when setting 0W (stopping charging)
         #[arg(short, long)]
         force: bool,
     },
@@ -141,9 +150,13 @@ pub enum Commands {
     ReadModbusSettings,
     /// Enable charging permission (sets charging current)
     Enable {
-        /// Charging current in Amperes (default: 16A)
+        /// Charging current in Amperes per phase (default: 16A)
         #[arg(default_value = "16", value_parser = parse_current)]
         amperes: u16,
+
+        /// Optional total 3-phase charging power in Watts (overrides amperes if specified)
+        #[arg(long)]
+        power: Option<u32>,
     },
     /// Disable / revoke charging permission (halts charging)
     Disable {

@@ -115,6 +115,21 @@ mod tests {
     }
 
     #[test]
+    fn test_power_watts_to_amperes() {
+        // 0 Watts -> 0A
+        assert_eq!(power_watts_to_amperes(0), 0);
+
+        // 11kW (3x230V): 11000 / 690 = 15.94 -> 16A
+        assert_eq!(power_watts_to_amperes(11000), 16);
+
+        // 22kW (3x230V): 22000 / 690 = 31.88 -> 32A
+        assert_eq!(power_watts_to_amperes(22000), 32);
+
+        // Low power clamped to minimum 6A (e.g. 2000W / 690 = 2.9A -> 6A)
+        assert_eq!(power_watts_to_amperes(2000), 6);
+    }
+
+    #[test]
     fn test_evcc2_modbus_settings_decode() {
         // Register 0x0003: 0327 -> Reg: 0x03, byte 1: 0x27
         // Bits 7..6: 00 (1 stop bit)

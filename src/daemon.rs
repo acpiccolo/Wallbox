@@ -49,6 +49,15 @@ pub fn run(
             }
         }
 
+        // If MQTT control is active, handle any incoming commands before reading measurements
+        if let Some(publisher) = &mqtt_publisher {
+            if publisher.allow_control() {
+                if let Err(e) = publisher.check_incoming_messages(client) {
+                    error!("Error handling incoming MQTT messages: {e}");
+                }
+            }
+        }
+
         match client.read_measurements() {
             Ok(meas) => match &output {
                 commandline::DaemonOutput::Console => {

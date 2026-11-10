@@ -16,6 +16,9 @@ pub struct MqttConfig {
     pub topic: String,
     #[serde(default = "MqttConfig::default_qos")]
     pub qos: i32,
+    /// Allow controlling the wallbox via MQTT subscriptions (default: false)
+    #[serde(default = "MqttConfig::default_allow_control")]
+    pub allow_control: bool,
     #[serde(default = "MqttConfig::default_client_id")]
     pub client_id: String,
     #[serde(
@@ -69,6 +72,10 @@ impl MqttConfig {
         0
     }
 
+    fn default_allow_control() -> bool {
+        false
+    }
+
     fn generate_random_string(len: usize) -> String {
         use rand::distr::{Alphanumeric, SampleString};
         Alphanumeric.sample_string(&mut rand::rng(), len)
@@ -118,6 +125,11 @@ impl MqttConfig {
         }
         if let Ok(env_client_id) = std::env::var("MQTT_CLIENT_ID") {
             config.client_id = env_client_id;
+        }
+        if let Ok(env_ctrl) = std::env::var("MQTT_ALLOW_CONTROL") {
+            if let Ok(val) = env_ctrl.parse::<bool>() {
+                config.allow_control = val;
+            }
         }
 
         Ok(config)
@@ -191,6 +203,8 @@ pub struct MqttPublisher {
     client: Client,
     topic: String,
     qos: i32,
+    allow_control: bool,
+    consumer: Option<paho_mqtt::SyncReceiver<Option<paho_mqtt::Message>>>,
     was_disconnected: AtomicBool,
 }
 
@@ -198,12 +212,112 @@ impl MqttPublisher {
     pub fn new(config_file: &str) -> Result<Self> {
         let config = MqttConfig::load(config_file)?;
         let client = config.create_client()?;
+
+        let consumer = if config.allow_control {
+            log::info!("MQTT remote control is ENABLED. Setting up consumer...");
+            let rx = client.start_consuming();
+            let sub_topic = format!("{}/set/#", config.topic);
+            log::info!("Subscribing to command topic: {sub_topic}");
+            client.subscribe(&sub_topic, config.qos)
+                .with_context(|| format!("Failed to subscribe to {sub_topic}"))?;
+            Some(rx)
+        } else {
+            log::info!("MQTT remote control is disabled (read-only mode).");
+            None
+        };
+
         Ok(Self {
             client,
             topic: config.topic,
             qos: config.qos,
+            allow_control: config.allow_control,
+            consumer,
             was_disconnected: AtomicBool::new(false),
         })
+    }
+
+    pub fn allow_control(&self) -> bool {
+        self.allow_control
+    }
+
+    /// Check for incoming control messages without blocking.
+    pub fn check_incoming_messages(
+        &self,
+        wallbox: &mut abl_evcc_lib::ascii_client::AsciiClient,
+    ) -> Result<()> {
+        let Some(consumer) = &self.consumer else {
+            return Ok(());
+        };
+
+        while let Ok(Some(msg)) = consumer.try_recv() {
+            let topic = msg.topic();
+            let payload = msg.payload_str();
+            log::info!("Received MQTT command on topic '{}': '{}'", topic, payload);
+
+            let prefix = format!("{}/set/", self.topic);
+            if let Some(cmd) = topic.strip_prefix(&prefix) {
+                match cmd {
+                    "current" => {
+                        if let Ok(amps) = payload.trim().parse::<u16>() {
+                            if amps == 0 || (6..=80).contains(&amps) {
+                                log::info!("Applying MQTT current setting: {}A", amps);
+                                if let Err(e) = wallbox.set_current(amps) {
+                                    log::error!("Failed to set current via MQTT: {e}");
+                                }
+                            } else {
+                                log::warn!("Invalid current received on MQTT: {}A (allowed: 0 or 6..80)", amps);
+                            }
+                        }
+                    }
+                    "power" => {
+                        if let Ok(watts) = payload.trim().parse::<u32>() {
+                            let amps = abl_evcc_lib::protocol::power_watts_to_amperes(watts);
+                            log::info!("Applying MQTT power setting: {}W (converted to {}A per phase)", watts, amps);
+                            if let Err(e) = wallbox.set_current(amps) {
+                                log::error!("Failed to set power via MQTT: {e}");
+                            }
+                        }
+                    }
+                    "enable" => {
+                        let text = payload.trim().to_lowercase();
+                        if text == "true" || text == "1" || text == "on" {
+                            log::info!("Enabling charging via MQTT");
+                            if let Err(e) = wallbox.enable(None) {
+                                log::error!("Failed to enable charging via MQTT: {e}");
+                            }
+                        } else if text == "false" || text == "0" || text == "off" {
+                            log::info!("Disabling charging via MQTT");
+                            if let Err(e) = wallbox.disable() {
+                                log::error!("Failed to disable charging via MQTT: {e}");
+                            }
+                        }
+                    }
+                    "wake_up" => {
+                        let text = payload.trim().to_lowercase();
+                        if text == "true" || text == "1" {
+                            log::info!("Triggering wake-up sequence via MQTT");
+                            if let Err(e) = wallbox.wake_up() {
+                                log::error!("Failed to trigger wake-up via MQTT: {e}");
+                            }
+                        }
+                    }
+                    "reset" => {
+                        let text = payload.trim().to_lowercase();
+                        if text == "true" || text == "1" {
+                            log::info!("Triggering controller reset via MQTT");
+                            if let Err(e) = wallbox.reset() {
+                                log::error!("Failed to trigger reset via MQTT: {e}");
+                            }
+                        }
+                    }
+                    other => {
+                        log::warn!("Unknown MQTT command topic: {}", other);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn publish_measurements(

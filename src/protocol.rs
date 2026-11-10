@@ -605,3 +605,16 @@ pub fn amperes_to_evcc2_duty_cycle(amperes: u16) -> u16 {
         ((amperes as f32 / 0.06).round() as u16).clamp(80, 1000)
     }
 }
+
+/// Converts total 3-phase power in Watts (assuming 230V per phase, 3 phases)
+/// to charging current in Amperes per phase: `I = round(P / (3 * 230))`.
+///
+/// Returns 0 if watts == 0, or clamps between 6A and 80A.
+pub fn power_watts_to_amperes(watts: u32) -> u16 {
+    if watts == 0 {
+        0
+    } else {
+        let amps = (watts as f64 / (3.0 * 230.0)).round() as u16;
+        amps.clamp(6, 80)
+    }
+}

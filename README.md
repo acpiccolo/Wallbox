@@ -5,9 +5,10 @@ This repository contains a Rust library and command-line tool for interacting wi
 ## Table of Contents
 - [Overview](#overview)
 - [Modbus ASCII Registers](#modbus-ascii-registers)
+- [Ampere vs. Watt Definition](#ampere-vs-watt-definition)
 - [Connection Methods (`serial` vs `tcp`)](#connection-methods-serial-vs-tcp)
 - [Available CLI Commands](#available-cli-commands)
-- [Daemon Mode & MQTT](#daemon-mode--mqtt)
+- [Daemon Mode & MQTT (Bidirectional Control)](#daemon-mode--mqtt-bidirectional-control)
 - [Technical Documentation](#technical-documentation)
 - [License](#license)
 
@@ -19,7 +20,20 @@ Requests start with `:` (`0x3A`), responses start with `>` (`0x3E`), and frames 
 
 This tool provides two direct connection modes:
 - **`tcp`**: Connects directly via TCP to transparent serial servers (such as **Elfin EW11**, USR-TCP232, Protoss-PE11, etc.) without requiring `socat`.
-- **`serial`**: Connects via local serial devices or virtual serial ports (default: `/dev/ttyUSB0`, or Windows COM ports) with configurable baud rate, parity, stop bits, and address.
+- **`serial`**: Connects via local serial devices or virtual serial ports (default: `/dev/ttyUSB0`, or Windows COM ports) with configurable baud rate, parity, stop bits, address, and automatic serial delay timing verification.
+
+---
+
+## Ampere vs. Watt Definition
+
+- **Ampere (`set-current`) ist pro Phase:**
+  Die Wallbox signalisiert über das Control-Pilot-PWM-Signal die maximale Stromstärke pro Phase (6A bis 80A, oder 0A zum Stoppen).
+- **Watt (`set-power`) gilt für 3 Phasen:**
+  Die Wattangabe wird für ein 3-phasiges Netz ($3 \times 230\,\text{V} = 690\,\text{V}$) automatisch in die entsprechende Stromstärke pro Phase umgerechnet:
+  $$\text{Ampere pro Phase} = \text{round}\left(\frac{\text{Leistung in Watt}}{3 \times 230\,\text{V}}\right)$$
+  - Beispiel: `11000 W` $\rightarrow$ `16 A` pro Phase
+  - Beispiel: `22000 W` $\rightarrow$ `32 A` pro Phase
+  - Beispiel: `0 W` $\rightarrow$ `0 A` (Ladestopp)
 
 ---
 
@@ -87,22 +101,34 @@ abl-evcc tcp 192.168.3.128:8899 read-currents
 abl-evcc tcp 192.168.3.128:8899 read-current
 ```
 
-### Set Charging Current Limit (`set-current`)
+### Set Charging Current in Amperes per phase (`set-current`)
 ```bash
-# Set limit to 16 Amperes:
+# Set limit to 16 Amperes per phase:
 abl-evcc tcp 192.168.3.128:8899 set-current 16
 
-# Stop / halt charging (0 Amperes):
-abl-evcc tcp 192.168.3.128:8899 set-current 0
+# Stop / halt charging (0 Amperes, prompts for confirmation unless -f / --force is given):
+abl-evcc tcp 192.168.3.128:8899 set-current 0 --force
+```
+
+### Set Charging Power in Watts for 3 phases (`set-power`)
+```bash
+# Set limit to 11000 Watts (3-phase, converts to 16A per phase):
+abl-evcc tcp 192.168.3.128:8899 set-power 11000
+
+# Stop / halt charging (0 Watts, prompts for confirmation unless -f / --force is given):
+abl-evcc tcp 192.168.3.128:8899 set-power 0 --force
 ```
 
 ### Enable / Disable Charging (`enable`, `disable`)
 ```bash
-# Enable at 16A:
+# Enable at 16A per phase:
 abl-evcc tcp 192.168.3.128:8899 enable 16
 
-# Disable charging:
-abl-evcc tcp 192.168.3.128:8899 disable
+# Enable specifying 3-phase power:
+abl-evcc tcp 192.168.3.128:8899 enable --power 11000
+
+# Disable charging (prompts for confirmation unless -f / --force is given):
+abl-evcc tcp 192.168.3.128:8899 disable --force
 ```
 
 ### Read Firmware & Hardware Configuration (`read-firmware`)
@@ -127,21 +153,20 @@ abl-evcc tcp 192.168.3.128:8899 wake-up
 ```
 
 ### Reset Controller (`reset`)
-Sends command `0x5A5A` to restart the EVCC2 controller:
+Sends command `0x5A5A` to restart the EVCC2 controller (prompts for confirmation unless `-f / --force` is given):
 ```bash
-abl-evcc tcp 192.168.3.128:8899 reset
+abl-evcc tcp 192.168.3.128:8899 reset --force
 ```
 
 ---
 
-## Daemon Mode & MQTT
+## Daemon Mode & MQTT (Bidirectional Control)
 
-Both `tcp` and `serial` modes support continuous polling:
+Continuously polls wallbox data and logs to console or publishes to an MQTT broker:
 
 - **Log to Console:**
   ```bash
   abl-evcc tcp 192.168.3.128:8899 daemon console
-  abl-evcc serial --device /dev/ttyUSB0 daemon console
   ```
 
 - **Publish to MQTT Broker:**
@@ -149,18 +174,26 @@ Both `tcp` and `serial` modes support continuous polling:
   abl-evcc tcp 192.168.3.128:8899 daemon mqtt --mqtt-config mqtt.yaml
   ```
 
-  Published MQTT topics:
-  - `<topic>/status`: Character (`A`, `B`, `C`, `D`, `E`, `F`)
-  - `<topic>/status_code`: Hex code (`0x00A1`, `0x00B1`, `0x00C2`, etc.)
-  - `<topic>/status_description`: Human-readable status description
-  - `<topic>/ev_connected`: Boolean (`true`/`false`)
-  - `<topic>/configured_current`: Configured charging current in Amperes
-  - `<topic>/enabled`: Boolean indicating if charging is active (`true` if current >= 6A)
-  - `<topic>/current_l1`: Phase 1 current in Amperes
-  - `<topic>/current_l2`: Phase 2 current in Amperes
-  - `<topic>/current_l3`: Phase 3 current in Amperes
-  - `<topic>/power`: Total calculated active charging power in Watts
-  - `<topic>/JSON`: Full JSON object with all measurement values
+### Published MQTT Topics:
+- `<topic>/status`: Character (`A`, `B`, `C`, `D`, `E`, `F`)
+- `<topic>/status_code`: Hex code (`0x00A1`, `0x00B1`, `0x00C2`, etc.)
+- `<topic>/status_description`: Human-readable status description
+- `<topic>/ev_connected`: Boolean (`true`/`false`)
+- `<topic>/configured_current`: Configured charging current in Amperes per phase
+- `<topic>/enabled`: Boolean indicating if charging is active (`true` if current >= 6A)
+- `<topic>/current_l1`: Phase 1 current in Amperes
+- `<topic>/current_l2`: Phase 2 current in Amperes
+- `<topic>/current_l3`: Phase 3 current in Amperes
+- `<topic>/power`: Total calculated active charging power in Watts
+- `<topic>/JSON`: Full JSON object with all measurement values
+
+### Bidirectional Control via MQTT:
+When `allow_control: true` is set in `mqtt.yaml` (default: `false`), the daemon subscribes to `<topic>/set/#` and allows remote control:
+- `<topic>/set/current`: Sets maximum current in Amperes per phase (e.g. `16` or `0` to stop).
+- `<topic>/set/power`: Sets 3-phase power in Watts (e.g. `11000` or `0` to stop).
+- `<topic>/set/enable`: Boolean (`true` / `on` to enable at 16A, `false` / `off` to disable).
+- `<topic>/set/wake_up`: Set to `true` / `1` to trigger vehicle wake-up sequence.
+- `<topic>/set/reset`: Set to `true` / `1` to restart the EVCC2 charge controller.
 
 ---
 
