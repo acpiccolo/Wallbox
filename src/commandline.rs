@@ -126,6 +126,10 @@ pub enum Commands {
         /// Current in Amperes (0 to disable/stop, or 6 to 80)
         #[arg(value_parser = parse_current)]
         amperes: u16,
+
+        /// Skip confirmation when setting 0A (stopping charging)
+        #[arg(short, long)]
+        force: bool,
     },
     /// Read 3-phase currents and active power (Register 0x002E)
     ReadCurrents,
@@ -142,11 +146,19 @@ pub enum Commands {
         amperes: u16,
     },
     /// Disable / revoke charging permission (halts charging)
-    Disable,
+    Disable {
+        /// Skip confirmation when disabling charging
+        #[arg(short, long)]
+        force: bool,
+    },
     /// Wake up sleeping vehicle via state E0 -> A1 Control Pilot sequence
     WakeUp,
     /// Reset the wallbox charge controller (Register 0x0005, code 0x5A5A)
-    Reset,
+    Reset {
+        /// Skip confirmation when resetting the charge controller
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 const fn about_text() -> &'static str {

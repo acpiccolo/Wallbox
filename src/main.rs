@@ -119,7 +119,17 @@ fn handle_commands(
                 println!("{}", serde_json::to_string_pretty(&json)?);
             }
         }
-        commandline::Commands::SetCurrent { amperes } => {
+        commandline::Commands::SetCurrent { amperes, force } => {
+            if *amperes == 0 && !force {
+                eprintln!("Warning: Setting charging current to 0A will immediately halt active charging.");
+                eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
             client
                 .set_current(*amperes)
                 .with_context(|| format!("Cannot set charging current to {amperes}A"))?;
@@ -178,7 +188,17 @@ fn handle_commands(
                 println!("{}", serde_json::to_string_pretty(&settings)?);
             }
         }
-        commandline::Commands::Reset => {
+        commandline::Commands::Reset { force } => {
+            if !force {
+                eprintln!("CRITICAL WARNING: Resetting the wallbox charge controller may interrupt active charging sessions!");
+                eprintln!("Pass --force to skip confirmation. Are you sure you want to proceed? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
             println!("Sending reset command to wallbox charge controller...");
             client
                 .reset()
@@ -191,7 +211,17 @@ fn handle_commands(
                 .with_context(|| format!("Cannot enable charging at {amperes}A"))?;
             println!("Charging successfully enabled at {}A.", amperes);
         }
-        commandline::Commands::Disable => {
+        commandline::Commands::Disable { force } => {
+            if !force {
+                eprintln!("Warning: Disabling charging will cut power and stop the charging session!");
+                eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
             client
                 .disable()
                 .with_context(|| "Cannot disable charging")?;
