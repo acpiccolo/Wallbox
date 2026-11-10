@@ -90,6 +90,31 @@ pub enum Connection {
         #[command(subcommand)]
         command: Commands,
     },
+    /// Modbus ASCII connection for ABL eMH1/eMH2 (EVCC2/3) wallboxes
+    Ascii {
+        /// Serial device path (e.g. /dev/ttyElfin, /dev/ttyUSB0, COM1)
+        #[arg(short, long)]
+        device: Option<String>,
+
+        /// TCP address of transparent network adapter (e.g. 192.168.3.128:8899)
+        #[arg(long)]
+        tcp: Option<String>,
+
+        /// Baud rate for serial device (default: 38400 for ABL eMH1/EVCC2/3)
+        #[arg(long, default_value = "38400")]
+        baud_rate: u32,
+
+        /// Modbus slave address from 1 to 16
+        #[arg(long, default_value = "1", value_parser = parse_address)]
+        address: u8,
+
+        /// Parity and stop bits
+        #[arg(long, default_value = "ep1b")]
+        parity_and_stop_bit: ParityAndStopBit,
+
+        #[command(subcommand)]
+        command: AsciiCommands,
+    },
     /// Offline ASCII frame utilities
     Frame {
         #[command(subcommand)]
@@ -175,6 +200,45 @@ pub enum DaemonOutput {
         #[arg(long, default_value = MqttConfig::DEFAULT_CONFIG_FILE)]
         mqtt_config: String,
     },
+}
+
+#[derive(Subcommand, Debug, Clone, PartialEq)]
+pub enum AsciiCommands {
+    /// Daemon mode to read all values continuously
+    Daemon {
+        /// Interval for repeated polling of values
+        #[arg(value_parser = parse_duration, short, long, default_value = "2sec")]
+        poll_iterval: Duration,
+
+        #[command(subcommand)]
+        mode: DaemonOutput,
+    },
+    /// Read all status, measurements, currents, and firmware info
+    ReadAll,
+    /// Read charging status (Register 0x0004 or 0x002E)
+    ReadStatus,
+    /// Read configured charging current limit / duty cycle (Register 0x0014)
+    ReadCurrent,
+    /// Set maximum charging current in Amperes (0 to halt/disable, 6 to 80)
+    SetCurrent {
+        /// Current in Amperes (0 to disable/stop, or 6 to 80)
+        #[arg(value_parser = parse_current)]
+        amperes: u16,
+    },
+    /// Read 3-phase currents and active power (Register 0x002E)
+    ReadCurrents,
+    /// Read firmware revision and hardware configuration (Register 0x0001)
+    ReadFirmware,
+    /// Enable charging permission (sets charging current)
+    Enable {
+        /// Charging current in Amperes (default: 16A)
+        #[arg(default_value = "16", value_parser = parse_current)]
+        amperes: u16,
+    },
+    /// Disable / revoke charging permission (halts charging)
+    Disable,
+    /// Wake up sleeping vehicle via state E0 -> A1 Control Pilot sequence
+    WakeUp,
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]

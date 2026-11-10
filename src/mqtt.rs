@@ -257,6 +257,66 @@ impl MqttPublisher {
         Ok(())
     }
 
+    pub fn publish_evcc2_measurements(
+        &self,
+        meas: &abl_evcc_lib::protocol::Evcc2Measurements,
+        firmware: Option<&abl_evcc_lib::protocol::Evcc2Firmware>,
+        no_json: bool,
+    ) -> Result<()> {
+        if !self.client.is_connected() {
+            if !self.was_disconnected.swap(true, Ordering::SeqCst) {
+                log::warn!("MQTT connection lost! Automatic reconnect is active in the background...");
+            }
+            return Ok(());
+        }
+
+        if self.was_disconnected.swap(false, Ordering::SeqCst) {
+            log::info!("MQTT connection re-established successfully.");
+        }
+
+        macro_rules! pub_msg {
+            ($label:expr, $val:expr) => {
+                self.client
+                    .publish(paho_mqtt::Message::new(
+                        format!("{}/{}", self.topic, $label),
+                        $val.to_string(),
+                        self.qos,
+                    ))
+                    .with_context(|| "Cannot publish MQTT message")?;
+            };
+        }
+
+        pub_msg!("status", meas.status.as_char());
+        pub_msg!("status_code", format!("{:#04X}", meas.status.raw_code()));
+        pub_msg!("status_description", meas.status.description());
+        pub_msg!("ev_connected", meas.ev_connected);
+        pub_msg!("configured_current", meas.configured_current_amperes);
+        pub_msg!("enabled", meas.configured_current_amperes >= 6.0);
+        pub_msg!("current_l1", meas.current_l1_amperes);
+        pub_msg!("current_l2", meas.current_l2_amperes);
+        pub_msg!("current_l3", meas.current_l3_amperes);
+        pub_msg!("power", meas.total_power_watts);
+
+        if let Some(fw) = firmware {
+            pub_msg!("firmware_revision", fw.firmware_revision);
+            pub_msg!("pcba_version", fw.pcba_version);
+        }
+
+        if !no_json {
+            let payload = serde_json::to_string(meas)?;
+            let msg = paho_mqtt::Message::new(
+                format!("{}/JSON", self.topic),
+                payload,
+                self.qos,
+            );
+            self.client
+                .publish(msg)
+                .with_context(|| "Cannot publish MQTT message")?;
+        }
+
+        Ok(())
+    }
+
     pub fn disconnect(&self) {
         if self.client.is_connected() {
             log::info!("Disconnecting from MQTT broker...");

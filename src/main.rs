@@ -259,6 +259,26 @@ fn main() -> Result<()> {
         commandline::Connection::Frame { command } => {
             handle_frame_commands(command)?;
         }
+        commandline::Connection::Ascii {
+            device,
+            tcp,
+            baud_rate,
+            address,
+            parity_and_stop_bit,
+            command,
+        } => {
+            handle_ascii_commands(
+                device.as_deref(),
+                tcp.as_deref(),
+                *baud_rate,
+                *address,
+                parity_and_stop_bit,
+                command,
+                delay,
+                args.timeout,
+                args.no_json,
+            )?;
+        }
         commandline::Connection::Serial {
             device,
             tcp,
@@ -267,6 +287,163 @@ fn main() -> Result<()> {
             command,
         } => {
             handle_serial_commands(device.as_deref(), tcp.as_deref(), *baud_rate, *address, command, args.timeout)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_ascii_commands(
+    device: Option<&str>,
+    tcp_addr: Option<&str>,
+    baud_rate: u32,
+    address: u8,
+    parity_and_stop_bit: &commandline::ParityAndStopBit,
+    command: &commandline::AsciiCommands,
+    delay: Duration,
+    timeout: Duration,
+    no_json: bool,
+) -> Result<()> {
+    let (parity, stop_bits) = match parity_and_stop_bit {
+        commandline::ParityAndStopBit::EvenParityOneStopBit => {
+            (tokio_serial::Parity::Even, tokio_serial::StopBits::One)
+        }
+        commandline::ParityAndStopBit::NoParityOneStopBit => {
+            (tokio_serial::Parity::None, tokio_serial::StopBits::One)
+        }
+        commandline::ParityAndStopBit::OddParityOneStopBit => {
+            (tokio_serial::Parity::Odd, tokio_serial::StopBits::One)
+        }
+        commandline::ParityAndStopBit::NoParityTwoStopBits => {
+            (tokio_serial::Parity::None, tokio_serial::StopBits::Two)
+        }
+    };
+
+    let mut client = match (device, tcp_addr) {
+        (Some(_), Some(_)) => anyhow::bail!("Cannot specify both --device and --tcp. Choose one transport."),
+        (None, None) => {
+            let default_dev = if cfg!(target_os = "windows") { "COM1" } else { "/dev/ttyUSB0" };
+            abl_evcc_lib::ascii_client::AsciiClient::connect_serial(
+                default_dev, baud_rate, parity, stop_bits, address, timeout, delay,
+            )?
+        }
+        (Some(dev), None) => {
+            abl_evcc_lib::ascii_client::AsciiClient::connect_serial(
+                dev, baud_rate, parity, stop_bits, address, timeout, delay,
+            )?
+        }
+        (None, Some(tcp)) => {
+            abl_evcc_lib::ascii_client::AsciiClient::connect_tcp(
+                tcp, address, timeout, delay,
+            )?
+        }
+    };
+
+    match command {
+        commandline::AsciiCommands::Daemon { poll_iterval, mode } => {
+            let interval = delay.max(*poll_iterval);
+            daemon::run_ascii(&mut client, mode.clone(), interval, no_json)?;
+        }
+        commandline::AsciiCommands::ReadAll => {
+            let fw = client.read_firmware().ok();
+            let meas = client.read_measurements()
+                .with_context(|| "Cannot read measurements and status from wallbox")?;
+            if no_json {
+                if let Some(f) = &fw {
+                    println!("--- Controller Info ---");
+                    println!("{f}");
+                    println!("\n--- Measurements & Status ---");
+                }
+                println!("{meas}");
+            } else {
+                #[derive(serde::Serialize)]
+                struct FullReport {
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    firmware: Option<proto::Evcc2Firmware>,
+                    measurements: proto::Evcc2Measurements,
+                }
+                let report = FullReport {
+                    firmware: fw,
+                    measurements: meas,
+                };
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+        }
+        commandline::AsciiCommands::ReadStatus => {
+            let status = client.read_status()
+                .with_context(|| "Cannot read charging status")?;
+            if no_json {
+                println!("{status}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            }
+        }
+        commandline::AsciiCommands::ReadCurrent => {
+            let (amperes, duty) = client.read_configured_current()
+                .with_context(|| "Cannot read configured current")?;
+            if no_json {
+                println!("Configured Charging Current: {:.1}A (Duty Cycle: {:.1}%)", amperes, duty as f32 / 10.0);
+            } else {
+                let json = serde_json::json!({
+                    "current_amperes": amperes,
+                    "duty_cycle_permille": duty,
+                    "duty_cycle_percent": duty as f32 / 10.0,
+                    "enabled": amperes >= 6.0
+                });
+                println!("{}", serde_json::to_string_pretty(&json)?);
+            }
+        }
+        commandline::AsciiCommands::SetCurrent { amperes } => {
+            client.set_current(*amperes)
+                .with_context(|| format!("Cannot set charging current to {amperes}A"))?;
+            if *amperes == 0 {
+                println!("Charging current disabled / stopped (0A).");
+            } else {
+                println!("Charging current successfully set to: {}A", amperes);
+            }
+        }
+        commandline::AsciiCommands::ReadCurrents => {
+            let meas = client.read_measurements()
+                .with_context(|| "Cannot read phase currents")?;
+            if no_json {
+                println!("Current L1: {:.1} A", meas.current_l1_amperes);
+                println!("Current L2: {:.1} A", meas.current_l2_amperes);
+                println!("Current L3: {:.1} A", meas.current_l3_amperes);
+                println!("Total Active Power: {:.1} W", meas.total_power_watts);
+            } else {
+                let json = serde_json::json!({
+                    "current_l1": meas.current_l1_amperes,
+                    "current_l2": meas.current_l2_amperes,
+                    "current_l3": meas.current_l3_amperes,
+                    "power_watts": meas.total_power_watts
+                });
+                println!("{}", serde_json::to_string_pretty(&json)?);
+            }
+        }
+        commandline::AsciiCommands::ReadFirmware => {
+            let fw = client.read_firmware()
+                .with_context(|| "Cannot read firmware information")?;
+            if no_json {
+                println!("{fw}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&fw)?);
+            }
+        }
+        commandline::AsciiCommands::Enable { amperes } => {
+            client.enable(Some(*amperes))
+                .with_context(|| format!("Cannot enable charging at {amperes}A"))?;
+            println!("Charging successfully enabled at {}A.", amperes);
+        }
+        commandline::AsciiCommands::Disable => {
+            client.disable()
+                .with_context(|| "Cannot disable charging")?;
+            println!("Charging successfully disabled / halted.");
+        }
+        commandline::AsciiCommands::WakeUp => {
+            println!("Sending wake-up sequence to vehicle (cycling state E0 -> A1)...");
+            client.wake_up()
+                .with_context(|| "Failed to execute wake-up sequence")?;
+            println!("Wake-up sequence completed.");
         }
     }
 

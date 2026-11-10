@@ -1,3 +1,4 @@
+pub mod ascii_client;
 pub mod protocol;
 
 #[cfg(any(
