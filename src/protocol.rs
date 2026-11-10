@@ -378,67 +378,261 @@ impl std::fmt::Display for PowerOrCurrent {
 // ABL SURSUM EVCC Native Serial ASCII Protocol (as documented in docs/EVCC.pdf)
 // =============================================================================
 
-/// Command codes for the serial ASCII protocol documented in docs/EVCC.pdf
+/// Command codes for the native ABL SURSUM serial ASCII protocol documented in docs/EVCC.pdf.
+///
+/// In this protocol, commands are transmitted as ASCII strings over RS485 with the syntax:
+/// `!n cc [xxxx]\r\n` where:
+/// - `n` is the module address (1..8, or 0 for broadcast)
+/// - `cc` is the 2-digit command code
+/// - `xxxx` is an optional 4-character parameter
+///
+/// Replies are returned with the syntax:
+/// `>n cc [xxxx]\r\n`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EvccCommand {
-    /// 00: Reset (Parameter: 1111)
+    /// **Command 00: Module Reset**
+    ///
+    /// Request: `!n 00 1111`
+    /// Reply: none (controller restarts)
+    /// Precondition: Available only in state A or in MANUAL mode.
     Reset,
-    /// 01: Get firmware revision (Reply: Vx.y)
+
+    /// **Command 01: Query Firmware Revision**
+    ///
+    /// Request: `!n 01`
+    /// Reply: `>n 01 Vx.y` (e.g. `>1 01 V2.3`)
+    /// Precondition: Available in all states (A and MANUAL).
     GetFirmware,
-    /// 02: Get state (0000=A, 0004=B2, 0005=C, 0006=D, 0009=B', 0013=B1, 0017=A', 0033=CS error, etc.)
+
+    /// **Command 02: Query Charge Controller State / Status**
+    ///
+    /// Request: `!n 02`
+    /// Reply: `>n 02 xxxx` where `xxxx` represents the current state machine position:
+    /// - `0000`: State A (Standby / No EV connected)
+    /// - `0004`: State B2 (EV connected, charge enabled, waiting for EV)
+    /// - `0005`: State C (Charging active)
+    /// - `0006`: State D (Charging active with external ventilation)
+    /// - `0009`: State B' (Charging stopped by vehicle)
+    /// - `0013`: State B1 (EV connected, charging halted / not yet released)
+    /// - `0017`: State A' (CP 0V / vehicle wake-up state)
+    /// - `0033`: CS error (Cable resistance reading out of range)
+    /// - `0035`: EV diode error (Vehicle diode defective)
+    /// - `0037`: Lock error (Type 2 socket locking actuator failed)
+    /// - `0039`: Ventilation error
+    /// - `0255`: MANUAL state (automatic state machine disabled)
     GetStatus,
-    /// 03: Switch to MANUAL mode
+
+    /// **Command 03: Switch to MANUAL Mode**
+    ///
+    /// Disables the automatic IEC 61851-1 state machine to allow direct hardware diagnosis.
+    /// Request: `!n 03`
+    /// Reply: `>n 03`
+    /// Precondition: Available only when in State A.
     SwitchToManual,
-    /// 04: Get output status (sum of active outputs)
+
+    /// **Command 04: Query Relay / Output Status**
+    ///
+    /// Returns the bitmask sum of currently energized outputs:
+    /// - `0001`: Output X1 on (LED)
+    /// - `0002`: Output X2 on (LED)
+    /// - `0004`: Relay K1 on (Main contactor / power supply to vehicle)
+    /// - `0008`: Relay K2 on (Ventilation relay)
+    /// - `0016`: Relay K3 on (Socket locking actuator)
+    /// - `0032`: CP +12V active
+    /// - `0064`: CP -12V active
+    /// Request: `!n 04`
+    /// Reply: `>n 04 xxxx`
     GetOutputStatus,
-    /// 05: Set output (Parameter: xxxx)
+
+    /// **Command 05: Set Output On**
+    ///
+    /// Manually energizes selected outputs specified by bitmask parameter `xxxx` (see Cmd 04).
+    /// Request: `!n 05 xxxx`
+    /// Reply: `>n 05`
+    /// Precondition: Available only in MANUAL mode.
     SetOutput,
-    /// 06: Clear output (Parameter: xxxx)
+
+    /// **Command 06: Clear Output Off**
+    ///
+    /// Manually de-energizes selected outputs specified by bitmask parameter `xxxx` (see Cmd 04).
+    /// Request: `!n 06 xxxx`
+    /// Reply: `>n 06`
+    /// Precondition: Available only in MANUAL mode.
     ClearOutput,
-    /// 07: Get ADC value positive U_CP
+
+    /// **Command 07: Query Positive Control Pilot (CP) Voltage**
+    ///
+    /// Reads the ADC voltage reading of positive CP signal:
+    /// Calculation: $U_{CP} = 0.017 \times \text{xxxx}\text{ [V]}$
+    /// Request: `!n 07`
+    /// Reply: `>n 07 xxxx`
     GetAdcPosUcp,
-    /// 08: Get ADC value negative U_CP
+
+    /// **Command 08: Query Negative Control Pilot (CP) Voltage**
+    ///
+    /// Reads the ADC voltage reading of negative CP signal:
+    /// Calculation: $U_{CP} = 0.017 \times \text{xxxx}\text{ [V]}$
+    /// Request: `!n 08`
+    /// Reply: `>n 08 xxxx`
     GetAdcNegUcp,
-    /// 09: Get ADC value U_CS
+
+    /// **Command 09: Query Cable Sensing (CS) ADC Value**
+    ///
+    /// Reads the Cable Detection (Proximity / PP) ADC raw value (range 0..1023).
+    /// Request: `!n 09`
+    /// Reply: `>n 09 xxxx`
     GetAdcUcs,
-    /// 10: Get digital input status (E1, E2)
+
+    /// **Command 10: Query Digital Inputs**
+    ///
+    /// Reads the state of hardware inputs E1 (Enable switch) and E2 (Lock feedback switch):
+    /// - `0000`: E1 and E2 open
+    /// - `0001`: E1 closed, E2 open
+    /// - `0002`: E2 closed, E1 open
+    /// - `0003`: Both E1 and E2 closed
+    /// Request: `!n 10`
+    /// Reply: `>n 10 xxxx`
     GetInputs,
-    /// 11: Get present PWM duty cycle (in 0.1% steps)
+
+    /// **Command 11: Query Present PWM Duty Cycle / Charging Current**
+    ///
+    /// Returns the currently signalled PWM duty cycle in 0.1% steps:
+    /// Calculation: $I = \text{PWM} \times 0.6\,\text{A}$ (or $(\text{PWM} - 64) \times 2.5\,\text{A}$ for $>51\,\text{A}$).
+    /// Request: `!n 11`
+    /// Reply: `>n 11 xxxx`
     GetPresentPwm,
-    /// 12: Set PWM duty cycle / charging current
+
+    /// **Command 12: Set PWM Duty Cycle / Charging Current**
+    ///
+    /// Sets the maximum current signalled to the connected electric vehicle:
+    /// - Preset steps: `0000`=6A, `0001`=10A, `0002`=13A, `0003`=16A, `0004`=20A, `0005`=30A, `0006`=32A, `0007`=63A, `0008`=70A, `0009`=80A
+    /// - `0010`: Revert to factory/module default charging current
+    /// - `0080`..`0970`: Direct PWM duty cycle in 0.1% steps (8.0% .. 97.0%)
+    /// - `0999`: Charging prohibited (halt charging, disconnect power)
+    /// Request: `!n 12 xxxx`
+    /// Reply: `>n 12`
     SetPwm,
-    /// 13: Enable PWM
+
+    /// **Command 13: Enable PWM Generator**
+    ///
+    /// Manually turns on the PWM oscillator on the Control Pilot line.
+    /// Request: `!n 13`
+    /// Reply: `>n 13`
+    /// Precondition: Available only in MANUAL mode.
     EnablePwm,
-    /// 14: Disable PWM
+
+    /// **Command 14: Disable PWM Generator**
+    ///
+    /// Manually turns off the PWM oscillator on the Control Pilot line.
+    /// Request: `!n 14`
+    /// Reply: `>n 14`
+    /// Precondition: Available only in MANUAL mode.
     DisablePwm,
-    /// 15: Set default PWM duty cycle
+
+    /// **Command 15: Set Default Charging Current (Default PWM)**
+    ///
+    /// Persists the module's non-volatile default charging current limit:
+    /// Parameters `0000`..`0009` corresponding to 6A..80A.
+    /// Request: `!n 15 xxxx`
+    /// Reply: `>n 15`
+    /// Precondition: Available only in MANUAL mode.
     SetDefaultPwm,
-    /// 16: Set ventilation marker (1110 = connected, 1111 = no ventilation)
+
+    /// **Command 16: Configure External Ventilation Marker**
+    ///
+    /// Informs the controller whether external room ventilation is connected:
+    /// - `1110`: Ventilation connected
+    /// - `1111`: No ventilation connected
+    /// Request: `!n 16 111x`
+    /// Reply: `>n 16`
+    /// Precondition: Available only in MANUAL mode.
     SetVentilationMarker,
-    /// 17: Get ventilation marker
+
+    /// **Command 17: Query Ventilation Marker**
+    ///
+    /// Reads ventilation configuration: `0000` = connected, `0001` = not connected.
+    /// Request: `!n 17`
+    /// Reply: `>n 17 000x`
     GetVentilationMarker,
-    /// 22: Set module address (111x)
+
+    /// **Command 22: Configure Module RS485 Address**
+    ///
+    /// Reassigns the controller's bus address to address `1` through `8`:
+    /// Parameter: `1111`=Address 1, `1112`=Address 2, ... `1118`=Address 8.
+    /// Request: `!n 22 111x`
+    /// Reply: `>n 22`
+    /// Precondition: Available only in MANUAL mode.
     SetModuleAddress,
-    /// 23: Get module address (0..8)
+
+    /// **Command 23: Query Module RS485 Address**
+    ///
+    /// Returns the controller's configured bus address (`0001` .. `0008`, or `0000`).
+    /// Request: `!n 23`
+    /// Reply: `>n 23 000x`
     GetModuleAddress,
-    /// 24: Load factory settings and reset (1111)
+
+    /// **Command 24: Factory Reset**
+    ///
+    /// Resets all controller parameters to factory defaults and restarts.
+    /// Request: `!n 24 1111`
+    /// Reply: `>n 01 Vx.y` (firmware revision banner)
+    /// Precondition: Available only in MANUAL mode.
     LoadFactorySettingsAndReset,
-    /// 25: Stop charging or leave MANUAL mode
+
+    /// **Command 25: Terminate Charging Session / Exit MANUAL Mode**
+    ///
+    /// Leaves MANUAL mode and returns the charge controller to normal automatic operation.
+    /// Request: `!n 25`
+    /// Reply: `>n 25`
     StopChargingOrLeaveManual,
-    /// 26: Get default PWM duty cycle
+
+    /// **Command 26: Query Default PWM Duty Cycle**
+    ///
+    /// Reads the stored default PWM duty cycle in 0.1% steps:
+    /// Calculation: $I_{DEFAULT} = \text{PWM} \times 0.6\,\text{A}$
+    /// Request: `!n 26`
+    /// Reply: `>n 26 xxxx`
     GetDefaultPwm,
-    /// 27: Set bBreakCharge
+
+    /// **Command 27: Set Charging Halt (`bBreakCharge = 1`)**
+    ///
+    /// Sets the break charge flag. The controller halts the state machine in State B1
+    /// (vehicle connected, but power contactor opened and charging paused).
+    /// Request: `!n 27`
+    /// Reply: `>n 27`
     SetBreakCharge,
-    /// 28: Clear bBreakCharge
+
+    /// **Command 28: Clear Charging Halt (`bBreakCharge = 0`)**
+    ///
+    /// Clears the break charge flag and releases charging (transition B1 -> B2 -> C).
+    /// Request: `!n 28`
+    /// Reply: `>n 28`
     ClearBreakCharge,
-    /// 29: Get bBreakCharge
+
+    /// **Command 29: Query Charging Halt Status (`bBreakCharge`)**
+    ///
+    /// Reads whether charging is halted: `0000` = released/normal, `0001` = halted in B1.
+    /// Request: `!n 29`
+    /// Reply: `>n 29 xxxx`
     GetBreakCharge,
-    /// 30: Switch to state A'
+
+    /// **Command 30: Switch to State A' (Disconnect CP / Vehicle Wake-Up)**
+    ///
+    /// Forces Control Pilot voltage to 0V (State A'). Used to simulate cable unplugging
+    /// to wake up sleeping electric vehicles.
+    /// Request: `!n 30`
+    /// Reply: `>n 30`
     SwitchToAPrime,
-    /// 31: Leave state A' (Switch to state A)
+
+    /// **Command 31: Leave State A' (Restore CP)**
+    ///
+    /// Restores standard +12V Control Pilot signal (returns from State A' to State A).
+    /// Request: `!n 31`
+    /// Reply: `>n 31`
     LeaveAPrime,
-    /// Other command code
+
+    /// **Custom or Unknown Command Code**
     Other(u8),
 }
 
