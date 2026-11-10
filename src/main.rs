@@ -9,6 +9,31 @@ mod commandline;
 mod daemon;
 mod mqtt;
 
+pub fn minimum_serial_delay(baud_rate: u32) -> Duration {
+    // Timing of serial communications (minimum 3.5 character times)
+    let rate = baud_rate as f64;
+    let bit_time = Duration::from_secs_f64(1.0 / rate);
+    let char_time = bit_time * 11;
+    let result = Duration::from_millis((char_time.as_secs_f64() * 3.5 * 1_000.0) as u64);
+    let min_duration = Duration::from_micros(1_750);
+    if result < min_duration {
+        min_duration
+    } else {
+        result
+    }
+}
+
+pub fn check_serial_delay(delay: Duration, baud_rate: u32) -> Duration {
+    let min_delay = minimum_serial_delay(baud_rate);
+    if delay < min_delay {
+        warn!(
+            "Your serial delay of {delay:?} is below the minimum delay of {min_delay:?}, fallback to minimum"
+        );
+        return min_delay;
+    }
+    delay
+}
+
 fn logging_init(loglevel: LevelFilter) -> LoggerHandle {
     let log_handle = Logger::try_with_env_or_str(loglevel.as_str())
         .expect("Cannot init logging")
@@ -238,9 +263,33 @@ fn handle_commands(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_delay() {
+        assert_eq!(minimum_serial_delay(1200).as_millis(), 32);
+        assert_eq!(minimum_serial_delay(2400).as_millis(), 16);
+        assert_eq!(minimum_serial_delay(4800).as_millis(), 8);
+        assert_eq!(minimum_serial_delay(9600).as_millis(), 4);
+        assert_eq!(minimum_serial_delay(19200).as_millis(), 2);
+        assert_eq!(minimum_serial_delay(38400), Duration::from_micros(1_750));
+        assert_eq!(minimum_serial_delay(57600), Duration::from_micros(1_750));
+
+        // Fallback test
+        let low_delay = Duration::from_millis(1);
+        assert_eq!(check_serial_delay(low_delay, 9600), Duration::from_millis(4));
+
+        let good_delay = Duration::from_millis(50);
+        assert_eq!(check_serial_delay(good_delay, 38400), Duration::from_millis(50));
+    }
+}
+
 fn main() -> Result<()> {
     let args = commandline::Args::parse();
     let _log_handle = logging_init(args.verbose.log_level_filter());
+    let mut delay = args.delay;
 
     match &args.connection {
         commandline::Connection::Serial {
@@ -250,6 +299,11 @@ fn main() -> Result<()> {
             parity_and_stop_bit,
             command,
         } => {
+            trace!(
+                "Open serial {device} address {address} baud rate {baud_rate} parity and stop bits {parity_and_stop_bit:?}"
+            );
+            delay = check_serial_delay(delay, *baud_rate);
+
             let (parity, stop_bits) = match parity_and_stop_bit {
                 commandline::ParityAndStopBit::EvenParityOneStopBit => {
                     (tokio_serial::Parity::Even, tokio_serial::StopBits::One)
@@ -272,18 +326,19 @@ fn main() -> Result<()> {
                 stop_bits,
                 *address,
                 args.timeout,
-                args.delay,
+                delay,
             )?;
-            handle_commands(&mut client, command, args.delay, args.no_json)?;
+            handle_commands(&mut client, command, delay, args.no_json)?;
         }
         commandline::Connection::Tcp {
             address,
             slave,
             command,
         } => {
+            trace!("Open TCP {address} slave {slave}");
             let mut client =
-                AsciiClient::connect_tcp(address, *slave, args.timeout, args.delay)?;
-            handle_commands(&mut client, command, args.delay, args.no_json)?;
+                AsciiClient::connect_tcp(address, *slave, args.timeout, delay)?;
+            handle_commands(&mut client, command, delay, args.no_json)?;
         }
     }
 
