@@ -6,7 +6,7 @@
 
 use crate::protocol::{
     amperes_to_evcc2_duty_cycle, decode_ascii_frame, encode_ascii_frame, evcc2_registers,
-    Evcc2Firmware, Evcc2Measurements, Evcc2Status,
+    Evcc2Firmware, Evcc2Measurements, Evcc2ModbusSettings, Evcc2Status, Evcc2SystemFlags,
 };
 use anyhow::{bail, Context, Result};
 use log::*;
@@ -252,6 +252,27 @@ impl AsciiClient {
     /// Disable charging (halts charging / sets duty cycle to disabled 0x03E8).
     pub fn disable(&mut self) -> Result<()> {
         self.set_current(0)
+    }
+
+    /// Read Modbus communication settings (Register 0x0003, 1 word).
+    pub fn read_modbus_settings(&mut self) -> Result<Evcc2ModbusSettings> {
+        let bytes = self.read_holding_registers(evcc2_registers::REG_MODBUS_SETTINGS, 1)?;
+        Evcc2ModbusSettings::decode(&bytes)
+            .with_context(|| "Failed to parse EVCC2 Modbus settings")
+    }
+
+    /// Read system flags and state machine pointer (Register 0x0006, 2 words).
+    pub fn read_system_flags(&mut self) -> Result<Evcc2SystemFlags> {
+        let bytes = self.read_holding_registers(evcc2_registers::REG_SYSTEM_FLAGS, 2)?;
+        Evcc2SystemFlags::decode(&bytes)
+            .with_context(|| "Failed to parse EVCC2 system flags")
+    }
+
+    /// Reset wallbox charge controller (Register 0x0005, value 0x5A5A).
+    pub fn reset(&mut self) -> Result<()> {
+        trace!("Sending reset command (0x5A5A) to EVCC2 controller");
+        self.write_multiple_registers(evcc2_registers::REG_MODIFY_STATE, &[0x5A5A])
+            .with_context(|| "Failed to send reset command to wallbox")
     }
 
     /// Wake up the vehicle by toggling state E0 (outlet disabled) -> A1 (waiting for EV).

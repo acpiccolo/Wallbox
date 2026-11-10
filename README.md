@@ -4,9 +4,9 @@ This repository contains a Rust library and command-line tool for interacting wi
 
 ## Table of Contents
 - [Overview](#overview)
-- [Modbus ASCII Protocol & Registers](#modbus-ascii-protocol--registers)
+- [Modbus ASCII Registers](#modbus-ascii-registers)
 - [Connection Methods (`serial` vs `tcp`)](#connection-methods-serial-vs-tcp)
-- [Command-Line Usage](#command-line-usage)
+- [Available CLI Commands](#available-cli-commands)
 - [Daemon Mode & MQTT](#daemon-mode--mqtt)
 - [Technical Documentation](#technical-documentation)
 - [License](#license)
@@ -19,19 +19,21 @@ Requests start with `:` (`0x3A`), responses start with `>` (`0x3E`), and frames 
 
 This tool provides two direct connection modes:
 - **`tcp`**: Connects directly via TCP to transparent serial servers (such as **Elfin EW11**, USR-TCP232, Protoss-PE11, etc.) without requiring `socat`.
-- **`serial`**: Connects via local serial devices or virtual serial ports (e.g. `/dev/ttyUSB0` or Windows COM ports) with configurable baud rate, parity, stop bits, and address.
+- **`serial`**: Connects via local serial devices or virtual serial ports (default: `/dev/ttyUSB0`, or Windows COM ports) with configurable baud rate, parity, stop bits, and address.
 
 ---
 
-## Modbus ASCII Protocol & Registers
+## Modbus ASCII Registers
 
-The tool implements the official ABL EVCC2/3 specification:
+The tool implements all register definitions from the official ABL EVCC2/3 specification:
 
 | Register | Name / Function | Type | Description |
 |:---:|:---|:---:|:---|
 | **`0x0001`** | Read Device ID & Firmware | Read (2 words) | Hardware/PCBA revision, firmware version, and hardware flags (internal current sensor, RDC-MD, contactor monitor). |
+| **`0x0003`** | Read Modbus Settings | Read (1 word) | Current baud rate (9600..57600 Bd), parity (None/Odd/Even), and stop bits (1 or 2). |
 | **`0x0004`** | Read State Machine Status | Read (1 word) | Detailed state machine position: `0xA1` (Waiting for EV), `0xB1` (EV asking for charge), `0xB2` (EV permitted to charge), `0xC2` (Charging), error codes `0xF1`–`0xFB`. |
-| **`0x0005`** | Modify State | Write (1 word) | `0xE0E0` (jump to E0 outlet disabled), `0xA1A1` (jump to A1 waiting for EV), `0x5A5A` (reset). Used for vehicle wake-up. |
+| **`0x0005`** | Modify State / Reset | Write (1 word) | `0xE0E0` (jump to E0 outlet disabled), `0xA1A1` (jump to A1 waiting for EV), `0x5A5A` (restart controller). Used for vehicle wake-up and reset. |
+| **`0x0006`** | Read System Flags | Read (2 words) | State machine pointer, contactor feedback, upstream communication status, load imbalance, and overtemperature indicators. |
 | **`0x0014`** | Set Maximum Current / Duty Cycle | Write (1 word) | Duty cycle in 0.1% steps (`Amperes / 0.06`). `1000` (`0x03E8`) = disabled / charging prohibited. |
 | **`0x002E`** | Full Status & Phase Currents | Read (5 words) | Status byte, EV connection flag, configured current, and 3-phase currents in 0.1A resolution (`I_L1`, `I_L2`, `I_L3`). |
 
@@ -60,43 +62,32 @@ Configurable options:
 
 ---
 
-## Command-Line Usage
+## Available CLI Commands
 
-Both `tcp` and `serial` support identical subcommands:
+Both `tcp` and `serial` support all wallbox commands:
 
-### Read Wallbox Charging Status
+### Read Wallbox Charging Status (`read-status`)
 ```bash
-# Via direct TCP:
 abl-evcc tcp 192.168.3.128:8899 read-status
-
-# Via serial port:
-abl-evcc serial --device /dev/ttyUSB0 read-status
-```
-Example JSON output:
-```json
-"State A (0x00A1): Waiting for EV (Standby)"
-```
-With `--no-json`:
-```
-State A (0x00A1): Waiting for EV (Standby)
 ```
 
-### Read All Measurements (Status, Currents, Power, Firmware)
+### Read All Measurements & Diagnostics (`read-all`)
+Reads firmware info, system flags, and full measurements:
 ```bash
 abl-evcc tcp 192.168.3.128:8899 read-all
 ```
 
-### Read 3-Phase Currents & Active Power
+### Read 3-Phase Currents & Active Power (`read-currents`)
 ```bash
 abl-evcc tcp 192.168.3.128:8899 read-currents
 ```
 
-### Read Configured Charging Current
+### Read Configured Charging Current Limit (`read-current`)
 ```bash
 abl-evcc tcp 192.168.3.128:8899 read-current
 ```
 
-### Set Charging Current
+### Set Charging Current Limit (`set-current`)
 ```bash
 # Set limit to 16 Amperes:
 abl-evcc tcp 192.168.3.128:8899 set-current 16
@@ -105,7 +96,7 @@ abl-evcc tcp 192.168.3.128:8899 set-current 16
 abl-evcc tcp 192.168.3.128:8899 set-current 0
 ```
 
-### Enable / Disable Charging
+### Enable / Disable Charging (`enable`, `disable`)
 ```bash
 # Enable at 16A:
 abl-evcc tcp 192.168.3.128:8899 enable 16
@@ -114,10 +105,31 @@ abl-evcc tcp 192.168.3.128:8899 enable 16
 abl-evcc tcp 192.168.3.128:8899 disable
 ```
 
-### Wake Up Vehicle
+### Read Firmware & Hardware Configuration (`read-firmware`)
+```bash
+abl-evcc tcp 192.168.3.128:8899 read-firmware
+```
+
+### Read Wallbox System Flags & State Machine Pointer (`read-system-flags`)
+```bash
+abl-evcc tcp 192.168.3.128:8899 read-system-flags
+```
+
+### Read Modbus Communication Settings (`read-modbus-settings`)
+```bash
+abl-evcc tcp 192.168.3.128:8899 read-modbus-settings
+```
+
+### Wake Up Vehicle (`wake-up`)
 Cycles Control Pilot state (E0 -> wait 3s -> A1) to wake up sleeping EV onboard chargers:
 ```bash
 abl-evcc tcp 192.168.3.128:8899 wake-up
+```
+
+### Reset Controller (`reset`)
+Sends command `0x5A5A` to restart the EVCC2 controller:
+```bash
+abl-evcc tcp 192.168.3.128:8899 reset
 ```
 
 ---

@@ -113,4 +113,30 @@ mod tests {
         assert_eq!(amperes_to_evcc2_duty_cycle(16), 267);
         assert_eq!(amperes_to_evcc2_duty_cycle(32), 533);
     }
+
+    #[test]
+    fn test_evcc2_modbus_settings_decode() {
+        // Register 0x0003: 0327 -> Reg: 0x03, byte 1: 0x27
+        // Bits 7..6: 00 (1 stop bit)
+        // Bits 5..4: 10 (Even parity)
+        // Bits 3..0: 0111 (38400 Bd)
+        let settings = Evcc2ModbusSettings::decode(&[0x03, 0x27]).unwrap();
+        assert_eq!(settings.baud_rate, 38400);
+        assert_eq!(settings.parity, "Even");
+        assert_eq!(settings.stop_bits, 1);
+    }
+
+    #[test]
+    fn test_evcc2_system_flags_decode() {
+        // Register 0x0006: 0x06 (reg), 0x04 (pointer), 0x40, 0x10 (raw_flags: 0x4010)
+        // bit 14 set: b1_b2_disabled_after_power_cycle
+        // bit 4 set: b1_b2_disabled
+        let flags = Evcc2SystemFlags::decode(&[0x06, 0x04, 0x40, 0x10]).unwrap();
+        assert_eq!(flags.state_pointer, 4);
+        assert_eq!(flags.raw_flags, 0x4010);
+        assert!(flags.b1_b2_disabled);
+        assert!(flags.b1_b2_disabled_after_power_cycle);
+        assert!(!flags.upstream_comm_lost);
+        assert!(!flags.overtemperature_detected);
+    }
 }

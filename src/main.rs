@@ -57,25 +57,33 @@ fn handle_commands(
         }
         commandline::Commands::ReadAll => {
             let fw = client.read_firmware().ok();
+            let flags = client.read_system_flags().ok();
             let meas = client
                 .read_measurements()
                 .with_context(|| "Cannot read measurements and status from wallbox")?;
             if no_json {
                 if let Some(f) = &fw {
                     println!("--- Controller Info ---");
-                    println!("{f}");
-                    println!("\n--- Measurements & Status ---");
+                    println!("{f}\n");
                 }
+                if let Some(fl) = &flags {
+                    println!("--- System Flags ---");
+                    println!("{fl}\n");
+                }
+                println!("--- Measurements & Status ---");
                 println!("{meas}");
             } else {
                 #[derive(serde::Serialize)]
                 struct FullReport {
                     #[serde(skip_serializing_if = "Option::is_none")]
                     firmware: Option<proto::Evcc2Firmware>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    system_flags: Option<proto::Evcc2SystemFlags>,
                     measurements: proto::Evcc2Measurements,
                 }
                 let report = FullReport {
                     firmware: fw,
+                    system_flags: flags,
                     measurements: meas,
                 };
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -149,6 +157,33 @@ fn handle_commands(
             } else {
                 println!("{}", serde_json::to_string_pretty(&fw)?);
             }
+        }
+        commandline::Commands::ReadSystemFlags => {
+            let flags = client
+                .read_system_flags()
+                .with_context(|| "Cannot read system flags")?;
+            if no_json {
+                println!("{flags}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&flags)?);
+            }
+        }
+        commandline::Commands::ReadModbusSettings => {
+            let settings = client
+                .read_modbus_settings()
+                .with_context(|| "Cannot read Modbus settings")?;
+            if no_json {
+                println!("{settings}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&settings)?);
+            }
+        }
+        commandline::Commands::Reset => {
+            println!("Sending reset command to wallbox charge controller...");
+            client
+                .reset()
+                .with_context(|| "Failed to reset charge controller")?;
+            println!("Reset command acknowledged.");
         }
         commandline::Commands::Enable { amperes } => {
             client

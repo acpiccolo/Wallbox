@@ -390,6 +390,124 @@ impl std::fmt::Display for Evcc2Firmware {
     }
 }
 
+/// Modbus communication settings from Register 0x0003 (1 word / 2 bytes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Evcc2ModbusSettings {
+    pub baud_rate: u32,
+    pub parity: &'static str,
+    pub stop_bits: u8,
+}
+
+impl Evcc2ModbusSettings {
+    pub fn decode(payload: &[u8]) -> Result<Self, Error> {
+        if payload.len() < 2 {
+            return Err(Error::WordsCountError);
+        }
+        // Byte 0: Register referring to (0x03)
+        // Byte 1:
+        // Bits 7..6: Stop bits (00: 1 stop bit, 11: 2 stop bits)
+        // Bits 5..4: Parity (00: No parity, 01: Odd, 10: Even, 11: Invalid)
+        // Bits 3..0: Baud rate (0101: 9600, 0110: 19200, 0111: 38400, 1000: 57600)
+        let b1 = payload[1];
+        let stop_bits = if (b1 & 0xC0) == 0xC0 { 2 } else { 1 };
+        let parity = match (b1 >> 4) & 0x03 {
+            0 => "None",
+            1 => "Odd",
+            2 => "Even",
+            _ => "Unknown",
+        };
+        let baud_rate = match b1 & 0x0F {
+            0x05 => 9600,
+            0x06 => 19200,
+            0x07 => 38400,
+            0x08 => 57600,
+            other => other as u32 * 1000,
+        };
+
+        Ok(Self {
+            baud_rate,
+            parity,
+            stop_bits,
+        })
+    }
+}
+
+impl std::fmt::Display for Evcc2ModbusSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Baud rate: {} Bd, Parity: {}, Stop bits: {}",
+            self.baud_rate, self.parity, self.stop_bits
+        )
+    }
+}
+
+/// System flags from Register 0x0006 (2 words / 4 bytes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Evcc2SystemFlags {
+    pub raw_flags: u16,
+    pub state_pointer: u8,
+    pub b1_b2_disabled: bool,
+    pub b1_b2_disabled_after_power_cycle: bool,
+    pub upstream_comm_lost: bool,
+    pub load_imbalance_detected: bool,
+    pub overtemperature_detected: bool,
+    pub phase_current_meter_fault: bool,
+    pub e0_a1_disabled: bool,
+    pub a1_b1_disabled: bool,
+}
+
+impl Evcc2SystemFlags {
+    pub fn decode(payload: &[u8]) -> Result<Self, Error> {
+        if payload.len() < 4 {
+            return Err(Error::WordsCountError);
+        }
+        // Byte 0: 0x06 (register referring to)
+        // Byte 1: Pointer of state machine
+        let state_pointer = payload[1];
+        // Bytes 2..3: System flags
+        let raw_flags = u16::from_be_bytes([payload[2], payload[3]]);
+
+        let b1_b2_disabled = (raw_flags & (1 << 4)) != 0;
+        let b1_b2_disabled_after_power_cycle = (raw_flags & (1 << 14)) != 0;
+        let upstream_comm_lost = (raw_flags & (1 << 9)) != 0;
+        let load_imbalance_detected = (raw_flags & (1 << 8)) != 0;
+        let overtemperature_detected = (raw_flags & (1 << 7)) != 0;
+        let phase_current_meter_fault = (raw_flags & (1 << 6)) != 0;
+        let e0_a1_disabled = (raw_flags & (1 << 5)) != 0;
+        let a1_b1_disabled = (raw_flags & (1 << 3)) != 0;
+
+        Ok(Self {
+            raw_flags,
+            state_pointer,
+            b1_b2_disabled,
+            b1_b2_disabled_after_power_cycle,
+            upstream_comm_lost,
+            load_imbalance_detected,
+            overtemperature_detected,
+            phase_current_meter_fault,
+            e0_a1_disabled,
+            a1_b1_disabled,
+        })
+    }
+}
+
+impl std::fmt::Display for Evcc2SystemFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Raw Flags: {:#06X} (State Pointer: {:#04X})", self.raw_flags, self.state_pointer)?;
+        writeln!(f, "B1->B2 Transition Disabled: {}", self.b1_b2_disabled)?;
+        writeln!(f, "B1->B2 Disabled After Power-Cycle: {}", self.b1_b2_disabled_after_power_cycle)?;
+        writeln!(f, "Upstream Communication Lost: {}", self.upstream_comm_lost)?;
+        writeln!(f, "Load Imbalance Detected: {}", self.load_imbalance_detected)?;
+        writeln!(f, "Overtemperature (>60°C): {}", self.overtemperature_detected)?;
+        writeln!(f, "Phase Current Meter Fault: {}", self.phase_current_meter_fault)?;
+        writeln!(f, "E0->A1 Transition Disabled: {}", self.e0_a1_disabled)?;
+        write!(f, "A1->B1 Transition Disabled: {}", self.a1_b1_disabled)
+    }
+}
+
 /// Complete measurement and status set from Register 0x002E (5 words / 10 bytes).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

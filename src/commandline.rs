@@ -131,6 +131,10 @@ pub enum Commands {
     ReadCurrents,
     /// Read firmware revision and hardware configuration (Register 0x0001)
     ReadFirmware,
+    /// Read wallbox system flags and diagnostic indicators (Register 0x0006)
+    ReadSystemFlags,
+    /// Read wallbox Modbus communication settings (Register 0x0003)
+    ReadModbusSettings,
     /// Enable charging permission (sets charging current)
     Enable {
         /// Charging current in Amperes (default: 16A)
@@ -141,6 +145,8 @@ pub enum Commands {
     Disable,
     /// Wake up sleeping vehicle via state E0 -> A1 Control Pilot sequence
     WakeUp,
+    /// Reset the wallbox charge controller (Register 0x0005, code 0x5A5A)
+    Reset,
 }
 
 const fn about_text() -> &'static str {
