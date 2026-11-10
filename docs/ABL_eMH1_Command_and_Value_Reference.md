@@ -1,6 +1,6 @@
 # ABL eMH1 (EVCC2/3) Befehls-, Werte- und Register-Referenz
 
-Dieses Dokument bietet eine vollständige und detaillierte Dokumentation aller Kommandos, einstellbaren Werte, Rückgabefelder sowie aller verwendeten Abkürzungen und technischen Begriffe für die **ABL eMH1** (und eMH2 / EVCC2/3) Wallboxen.
+Dieses Dokument bietet eine vollständige, feldgenaue Dokumentation aller Kommandos, einstellbaren Werte, Rückgabefelder sowie aller verwendeten Abkürzungen und technischen Begriffe für **ABL eMH1** (und eMH2 / EVCC2/3) Wallboxen.
 
 ---
 
@@ -8,7 +8,7 @@ Dieses Dokument bietet eine vollständige und detaillierte Dokumentation aller K
 1. [Glossar und Abkürzungen](#1-glossar-und-abkürzungen)
 2. [Statuscodes nach IEC 61851-1 und ABL EVCC2](#2-statuscodes-nach-iec-61851-1-und-abl-evcc2)
 3. [Berechnungsgrundlagen: Stromstärke vs. Leistung](#3-berechnungsgrundlagen-stromstärke-vs-leistung)
-4. [Detaillierte Befehlsreferenz](#4-detaillierte-befehlsreferenz)
+4. [Detaillierte Befehls- und Feldspezifikation](#4-detaillierte-befehls--und-feldspezifikation)
    - [`read-status`](#read-status)
    - [`read-current`](#read-current)
    - [`set-current`](#set-current)
@@ -28,73 +28,71 @@ Dieses Dokument bietet eine vollständige und detaillierte Dokumentation aller K
 
 ## 1. Glossar und Abkürzungen
 
-| Abkürzung / Begriff | Vollständige Bezeichnung / Erklärung |
-|---|---|
-| **CP** | **Control Pilot** (Signalkontakt im Typ-2-Stecker nach IEC 61851-1). Überträgt ein 1 kHz PWM-Rechtecksignal zwischen Wallbox und Fahrzeug zur Kommunikation (Zustandserkennung über Spannungspegel +12V, +9V, +6V, 0V, -12V und Stromvorgabe über den Tastgrad). |
-| **CS / PP** | **Cable Sensing / Proximity Pilot** (Widerstandskodierung im Ladekabel). Dient der Erkennung der maximalen Strombelastbarkeit des verwendeten Typ-2-Ladekabels (z. B. 13A, 20A, 32A). |
-| **PWM** | **Pulse Width Modulation** (Pulsweitenmodulation). Die Rechteckwelle auf der CP-Leitung. |
-| **Duty Cycle / Tastgrad** | Das Verhältnis der Einschaltzeit zur Periodendauer des PWM-Signals in 0,1 %-Schritten (z. B. $267 = 26{,}7\,\% \rightarrow 16\,\text{A}$). |
-| **EV / EVSE** | **Electric Vehicle** (Elektrofahrzeug) / **Electric Vehicle Supply Equipment** (Ladeeinrichtung / Wallbox). |
-| **EVCC** | **Electric Vehicle Charge Controller** (die in der ABL Wallbox verbaute Steuerplatine der Serie EVCC2 bzw. EVCC3). |
-| **PCBA** | **Printed Circuit Board Assembly** (bestückte Leiterplatte / Hardware-Revision der ABL Steuerung, z. B. `160307`). |
-| **RDC-MD** | **Residual Direct Current - Monitoring Device** (Gleichfehlerstrom-Überwachung). Erkennt DC-Fehlerströme $\ge 6\,\text{mA}$ und schaltet die Wallbox sicher ab, wodurch ein teurer FI-Schutzschalter Typ B im Sicherungskasten entfällt. |
-| **Welding Detection** | **Schütz-Überwachung (Kontaktverschweißung)**. Prüft nach dem Ladeende, ob die Leistungskontakte des Schützes ordnungsgemäß geöffnet haben oder verschweißt sind. |
-| **LRC** | **Longitudinal Redundancy Check** (Längsparitätsprüfung). Prüfsummenverfahren für Modbus ASCII (2 Hex-Zeichen am Ende jedes Frames). |
-| **8E1** | Serielles Datenformat: **8** Datenbits, **E**ven Parity (gerade Parität), **1** Stopbit bei 38400 Baud. |
+| Abkürzung / Begriff | Vollständige Bezeichnung | Technische Erklärung und Funktion |
+|---|---|---|
+| **CP** | **Control Pilot** | Signalkontakt nach IEC 61851-1 im Typ-2-Stecker. Über ein 1-kHz-PWM-Signal kommunizieren Wallbox und Fahrzeug. Das Spannungsniveau signalisiert den Zustand (+12V = kein Auto, +9V = Auto verbunden, +6V = Ladeanforderung), während das Tastverhältnis (Duty Cycle) die maximal erlaubte Stromstärke vorgibt. |
+| **CS / PP** | **Cable Sensing / Proximity Pilot** | Widerstandskodierung zwischen PP und PE im Ladekabel. Die Wallbox erkennt darüber die Stromtragfähigkeit des Kabels (z. B. 13A, 20A, 32A). |
+| **PWM** | **Pulsweitenmodulation** | Rechtecksignal konstanter Frequenz (1 kHz), dessen Pulsbreite (Tastgrad) variabel ist. |
+| **Duty Cycle / Tastgrad** | **Pulsweitenverhältnis** | Anteil der High-Phase an der Periodendauer in Promille ($0{,}1\,\%$-Schritten). Formel: $\text{Strom (A)} = \text{Tastgrad} \times 0{,}06$. $267$ entspricht $26{,}7\,\% = 16\,\text{A}$. $1000$ ($100\,\%$) bedeutet Laden gesperrt. |
+| **EV** | **Electric Vehicle** | Das angeschlossene Elektrofahrzeug bzw. dessen On-Board-Charger (OBC). |
+| **EVSE** | **Electric Vehicle Supply Equipment** | Die Ladeinfrastruktur (Wallbox / Ladestation). |
+| **EVCC** | **Electric Vehicle Charge Controller** | Die in der Wallbox verbaute Steuerelektronik (ABL EVCC2 bzw. EVCC3). |
+| **PCBA** | **Printed Circuit Board Assembly** | Die bestückte Steuerplatine der Wallbox. Der Code (z. B. `160307` für 07.03.2016) identifiziert das Hardware-Layout. |
+| **RDC-MD** | **Residual Direct Current - Monitoring Device** | Integrierte Gleichfehlerstrom-Überwachung. Löst bei einem glatten DC-Fehlerstrom von $\ge 6\,\text{mA}$ aus und trennt das Ladeschütz allpolig. Verhindert die Vormagnetisierung bauseitiger Typ-A-FI-Schutzschalter. |
+| **Welding Detection** | **Schütz-Verschweißungserkennung** | Sicherheitsprüfung der Schaltkontakte des Leistungsschützes nach dem Abschalten. Erkennt, ob Kontakte kleben oder verschweißt sind. |
+| **LRC** | **Longitudinal Redundancy Check** | Prüfsummenalgorithmus für Modbus ASCII: Summe aller Datenbytes (Modulo 256), negiert im Zweierkomplement (`wrapping_neg`), hexadezimal kodiert. |
+| **8E1** | **Serielles Datenformat** | 8 Datenbits, Even Parity (gerade Parität), 1 Stopbit bei 38400 Baud. |
 
 ---
 
 ## 2. Statuscodes nach IEC 61851-1 und ABL EVCC2
 
-Die Wallbox meldet ihren Betriebszustand in den Registern `0x0004` und `0x002E`:
+Die ABL eMH1 liefert im Status-Byte (Register `0x0004` bzw. Byte 1 in `0x002E`) exakte Zustände:
 
-| Hex-Code | IEC-Zustand | Bedeutung / Beschreibung |
-|:---:|:---:|:---|
-| **`0xA1`** | **A** | **Standby / Kein Fahrzeug verbunden** (Wartet auf Anschluss eines Fahrzeugs, CP = +12V statisch). |
-| **`0xB1`** | **B** | **Fahrzeug verbunden, wartet auf Ladefreigabe** (Fahrzeug erkannt, Schütz noch offen, CP = +9V). |
-| **`0xB2`** | **B** | **Fahrzeug verbunden, Ladefreigabe erteilt** (Wallbox bereit, wartet auf Ladeanforderung des Autos). |
-| **`0xC2`** | **C** | **Ladevorgang aktiv** (Fahrzeug lädt, Hauptschütz geschlossen, CP = +6V mit aktivem PWM). |
-| **`0xC3`** | **C** | **Laden aktiv mit reduziertem Strom** (Fehler F16 oder F17 aktiv). |
-| **`0xC4`** | **C** | **Laden aktiv mit reduziertem Strom** (Schieflast-Begrenzung F15 aktiv). |
-| **`0xE0`** | **E** | **Ladepunkt deaktiviert** (Outlet disabled / Software-Sperre). |
-| **`0xE1`** | **E** | **Produktionstest** (Fertigungsdiagnose). |
-| **`0xE2`** | **E** | **Setup-Modus** (Konfigurationsmodus der EVCC). |
-| **`0xE3`** | **E** | **Bus Idle** (Keine Buskommunikation). |
-| **`0xF1`** | **F** | **Schützfehler / Welding** (Schützkontakt unerwünscht geschlossen). |
-| **`0xF2`** | **F** | **Interner Steuerungsfehler** (Controller-Hardwarefehler). |
-| **`0xF3`** | **F** | **DC-Fehlerstrom erkannt** (RDC-MD hat ausgelöst, DC $\ge 6\,\text{mA}$). |
-| **`0xF4`** | **F** | **Kommunikations-Timeout** (Keine Upstream-Nachricht empfangen). |
-| **`0xF5`** | **F** | **Steckerverriegelung fehlgeschlagen** (Motor der Typ-2-Buchse blockiert). |
-| **`0xF6`** | **F** | **CS-Widerstand unzulässig** (Kabelkodierung fehlerhaft oder Kabel defekt). |
-| **`0xF7`** | **D** | **Zustand D angefordert** (Fahrzeug verlangt externe Raumlüftung, z. B. bei Bleiakkus). |
-| **`0xF8`** | **F** | **CP-Spannung außerhalb des Toleranzbereichs**. |
-| **`0xF9`** | **F** | **Überstrom erkannt**. |
-| **`0xFA`** | **F** | **Übertemperatur** (Gehäuseinnentemperatur überschritten). |
-| **`0xFB`** | **F** | **Schützkontakt unerwünscht geöffnet**. |
+| Hex-Code | IEC | Bezeichnung | Technische Beschreibung |
+|:---:|:---:|:---|:---|
+| **`0xA1`** | **A** | **Waiting for EV** | Standby: Kein Fahrzeug angeschlossen. CP-Spannung liegt bei statischen +12 V. |
+| **`0xB1`** | **B** | **EV is asking for charging** | Fahrzeug angeschlossen, aber noch keine Ladefreigabe aktiv. CP wird vom Fahrzeug auf +9 V gezogen. Schütz ist offen. |
+| **`0xB2`** | **B** | **EV has permission to charge** | Fahrzeug angeschlossen und Freigabe erteilt. PWM aktiv, aber Fahrzeug fordert noch keine Energie an. |
+| **`0xC2`** | **C** | **EV is charging** | Ladevorgang aktiv. Fahrzeug zieht CP auf +6 V. Schütz ist geschlossen, Strom fließt. |
+| **`0xC3`** | **C** | **Reduced current (F16/F17)** | Laden aktiv, Stromstärke jedoch wegen Fehlerzustand F16/F17 intern gedrosselt. |
+| **`0xC4`** | **C** | **Reduced current (Imbalance)** | Laden aktiv, Stromstärke wegen Schieflast-Begrenzung (F15) gedrosselt. |
+| **`0xE0`** | **E** | **Outlet disabled** | Ladepunkt softwareseitig gesperrt / deaktiviert (CP = 0 V). |
+| **`0xE1`** | **E** | **Production test** | Fertigungs- und Endprüfungsmodus aktiv. |
+| **`0xE2`** | **E** | **EVCC setup mode** | Controller befindet sich im Konfigurationsmodus. |
+| **`0xE3`** | **E** | **Bus idle** | Busruhe / keine Master-Kommunikation. |
+| **`0xF1`** | **F** | **Welding detected** | Schwerer Fehler: Schützkontakte öffnen nicht (Kontaktverschweißung). |
+| **`0xF2`** | **F** | **Internal error** | Interner Hardware- oder Firmwarefehler des Controllers. |
+| **`0xF3`** | **F** | **DC residual current detected** | Schutzabschaltung: RDC-MD hat DC-Fehlerstrom $\ge 6\,\text{mA}$ detektiert. |
+| **`0xF4`** | **F** | **Communication timeout** | Upstream-Timeout überschritten (Verbindungsabbruch zum Managementsystem). |
+| **`0xF5`** | **F** | **Socket lock failed** | Verriegelungsaktuator der Typ-2-Steckdose konnte nicht ein- oder ausfahren. |
+| **`0xF6`** | **F** | **CS out of range** | Der über PP/CS gemessene Kabelkodierwiderstand ist unplausibel. |
+| **`0xF7`** | **D** | **State D requested** | Fahrzeug verlangt externe Belüftung (Ausgasung bei Blei-Akkus). |
+| **`0xF8`** | **F** | **CP out of range** | Signalpegel auf der Control-Pilot-Leitung außerhalb des IEC-Toleranzbereichs. |
+| **`0xF9`** | **F** | **Overcurrent detected** | Ladeüberstrom erkannt (Fahrzeug zieht mehr Strom als signalisiert). |
+| **`0xFA`** | **F** | **Temperature limits** | Gehäuse- oder Bauteilübertemperatur überschritten. |
+| **`0xFB`** | **F** | **Contactor opened error** | Schütz öffnete unerwartet während des aktiven Ladevorgangs. |
 
 ---
 
 ## 3. Berechnungsgrundlagen: Stromstärke vs. Leistung
 
-- **Ampere (`set-current`) gilt pro Phase:**
-  Die Norm IEC 61851-1 definiert das PWM-Signal immer als maximalen Strom **je Phase**.
-  Zulässige Werte: `0` (Halt/Ladestopp) oder `6` bis `80` Ampere.
-- **Watt (`set-power`) gilt für 3 Phasen:**
-  Für dreiphasiges Laden ($3 \times 230\,\text{V} = 690\,\text{V}$) wird die Wattangabe automatisch umgerechnet:
-  $$\text{Stromstärke (A)} = \text{round}\left(\frac{\text{Leistung in Watt}}{3 \times 230\,\text{V}}\right)$$
-  - `11000 W` $\rightarrow$ `16 A` (entspricht $16\,\text{A} \times 3 \times 230\,\text{V} = 11.040\,\text{W}$)
-  - `22000 W` $\rightarrow$ `32 A` (entspricht $32\,\text{A} \times 3 \times 230\,\text{V} = 22.080\,\text{W}$)
-  - `0 W` $\rightarrow$ `0 A` (Ladestopp)
+- **Ampere (`set-current`) ist immer der Strom pro Phase:**
+  Zulässiger Wertebereich: `0` (Ladestopp) oder `6` bis `80` Ampere.
+- **Watt (`set-power`) ist immer die Gesamtleistung für 3 Phasen (bei $3 \times 230\,\text{V}$):**
+  $$\text{Ampere pro Phase} = \text{round}\left(\frac{\text{Leistung (W)}}{3 \times 230\,\text{V}}\right)$$
+  - `11000 W` $\rightarrow$ $11000 / 690 = 15{,}94 \approx \mathbf{16\,\text{A}}$ pro Phase (entspricht $11.040\,\text{W}$)
+  - `22000 W` $\rightarrow$ $22000 / 690 = 31{,}88 \approx \mathbf{32\,\text{A}}$ pro Phase (entspricht $22.080\,\text{W}$)
+  - `0 W` $\rightarrow$ $\mathbf{0\,\text{A}}$ (Laden stoppen)
 
 ---
 
-## 4. Detaillierte Befehlsreferenz
+## 4. Detaillierte Befehls- und Feldspezifikation
 
 ### `read-status`
-Liest den aktuellen IEC 61851-1 Ladestatus der Wallbox aus Register `0x0004` (oder `0x002E`).
+Liest den aktuellen IEC 61851-1 Ladestatus aus Register `0x0004` (bzw. `0x002E`).
 
-- **Eingabe:** Keine Argumente.
-- **Konsolen-Ausgabe (formatiert):**
+- **Konsolen-Ausgabe:**
   ```text
   State A (0x00A1): Waiting for EV (Standby)
   ```
@@ -102,14 +100,17 @@ Liest den aktuellen IEC 61851-1 Ladestatus der Wallbox aus Register `0x0004` (od
   ```json
   "State A (0x00A1): Waiting for EV (Standby)"
   ```
+- **Feldbeschreibung:**
+  - `State <Buchstabe>`: Der IEC 61851-1 Hauptzustand (`A`, `B`, `C`, `D`, `E`, `F`).
+  - `(0x00..)`: Der hexadezimale Rohstatuscode der ABL EVCC2 (siehe Abschnitt 2).
+  - Textbeschreibung: Menschlich lesbare Erklärung des Betriebszustands.
 
 ---
 
 ### `read-current`
-Liest die aktuell in Register `0x0014` hinterlegte Stromvorgabe (PWM-Tastgrad) aus.
+Liest das aktuell vorgegebene Stromlimit aus Register `0x0014`.
 
-- **Eingabe:** Keine Argumente.
-- **Konsolen-Ausgabe (formatiert):**
+- **Konsolen-Ausgabe:**
   ```text
   Configured Charging Current: 16.0A (Duty Cycle: 26.7%)
   ```
@@ -122,21 +123,24 @@ Liest die aktuell in Register `0x0014` hinterlegte Stromvorgabe (PWM-Tastgrad) a
     "enabled": true
   }
   ```
-- **Bedeutung der Felder:**
-  - `current_amperes`: Berechnete Stromstärke in Ampere pro Phase ($267 \times 0{,}06 = 16{,}02\,\text{A}$).
-  - `duty_cycle_permille`: Rohwert des Registers in 0,1 % ($1000$ = Ladevorgang deaktiviert/gesperrt).
-  - `enabled`: `true`, wenn Strom $\ge 6\,\text{A}$ beträgt (Ladefreigabe aktiv).
+- **Felddefinitionen:**
+  - `current_amperes` (Float, Einheit: Ampere `A`):
+    Der aus dem Tastgrad errechnete Soll-Ladestrom pro Phase ($267 \times 0{,}06 = 16{,}0\,\text{A}$).
+  - `duty_cycle_percent` (Float, Einheit: `%`):
+    PWM-Tastgrad in Prozent ($26{,}7\,\%$).
+  - `duty_cycle_permille` (Integer, Einheit: `‰`):
+    Rohwert aus Register `0x0014` in 0,1 %-Schritten ($267$). $1000$ bedeutet Ladevorgang deaktiviert.
+  - `enabled` (Boolean):
+    `true`, wenn der Sollstrom $\ge 6\,\text{A}$ beträgt (Ladefreigabe aktiv). `false`, wenn $0\,\text{A}$ (gesperrt).
 
 ---
 
 ### `set-current <AMPERES> [--force]`
-Stellt das Stromlimit pro Phase in Register `0x0014` ein.
+Setzt das Stromlimit pro Phase in Register `0x0014`.
 
-- **Parameter:**
-  - `<AMPERES>`: Ganzzahliger Wert: `0` (Halt/Freigabe entzogen) oder `6` bis `80` Ampere pro Phase.
-  - `-f, --force`: Überspringt die Sicherheitsbestätigung bei `0A`.
-- **Sicherheitsabfrage:**
-  Beim Setzen von `0A` fragt das Tool interaktiv nach (`Continue? [y/N]`), um ein versehentliches Abbrechen aktiver Ladevorgänge zu verhindern.
+- **Argumente:**
+  - `<AMPERES>`: Integer (`0` oder `6`..`80`). Stromstärke in Ampere pro Phase.
+  - `-f, --force`: Überspringt die Bestätigungsabfrage beim Setzen von `0A`.
 - **Konsolen-Ausgabe:**
   ```text
   Charging current successfully set to: 16A per phase (Total 3-phase power: 11040W)
@@ -145,11 +149,11 @@ Stellt das Stromlimit pro Phase in Register `0x0014` ein.
 ---
 
 ### `set-power <WATTS> [--force]`
-Berechnet aus der dreiphasigen Leistung in Watt die entsprechende Stromstärke pro Phase und schreibt sie in Register `0x0014`.
+Berechnet aus der dreiphasigen Leistung in Watt die Stromstärke pro Phase und setzt diese in Register `0x0014`.
 
-- **Parameter:**
-  - `<WATTS>`: Ganzzahliger Leistungswert in Watt für 3 Phasen (z. B. `11000` für 11 kW, `0` zum Stoppen).
-  - `-f, --force`: Überspringt die Sicherheitsbestätigung bei `0W`.
+- **Argumente:**
+  - `<WATTS>`: Integer. Gesamtleistung in Watt über 3 Phasen (bei 230V).
+  - `-f, --force`: Überspringt die Bestätigungsabfrage bei `0W`.
 - **Konsolen-Ausgabe:**
   ```text
   Charging power 11000W (3-phase) successfully converted and set to: 16A per phase (effective power: 11040W).
@@ -158,10 +162,9 @@ Berechnet aus der dreiphasigen Leistung in Watt die entsprechende Stromstärke p
 ---
 
 ### `read-currents`
-Liest die tatsächlich gemessenen Ströme aller 3 Phasen aus Register `0x002E` aus und berechnet die momentane Gesamtwirkleistung in Watt.
+Liest die Phasenströme und berechnet die momentane Wirkleistung aus Register `0x002E`.
 
-- **Eingabe:** Keine Argumente.
-- **Konsolen-Ausgabe (formatiert):**
+- **Konsolen-Ausgabe:**
   ```text
   Current L1: 15.8 A
   Current L2: 15.9 A
@@ -177,14 +180,18 @@ Liest die tatsächlich gemessenen Ströme aller 3 Phasen aus Register `0x002E` a
     "power_watts": 10902.0
   }
   ```
+- **Felddefinitionen:**
+  - `current_l1`, `current_l2`, `current_l3` (Float, Einheit: Ampere `A`):
+    Echte, vom internen Wandler gemessene Ströme der einzelnen Phasen mit $0{,}1\,\text{A}$ Auflösung. Liefert `0.0`, wenn kein Strom fließt oder kein Messwandler vorhanden ist.
+  - `power_watts` (Float, Einheit: Watt `W`):
+    Berechnete Gesamtwirkleistung bei $230\,\text{V}$ Netzspannung: $(I_{L1} + I_{L2} + I_{L3}) \times 230\,\text{V}$.
 
 ---
 
 ### `read-firmware`
-Liest Hardware- und Firmware-Informationen aus Register `0x0001` (2 Wörter / 4 Bytes).
+Liest Identifikations- und Ausstattungsdaten aus Register `0x0001` (2 Wörter / 4 Bytes).
 
-- **Eingabe:** Keine Argumente.
-- **Konsolen-Ausgabe (formatiert):**
+- **Konsolen-Ausgabe:**
   ```text
   Device ID: 1
   Firmware Revision: V4.1
@@ -206,14 +213,21 @@ Liest Hardware- und Firmware-Informationen aus Register `0x0001` (2 Wörter / 4 
     "welding_detection_enabled": true
   }
   ```
+- **Felddefinitionen:**
+  - `device_id` (Integer): Konfigurierte Modbus-Slave-Adresse (1..16).
+  - `firmware_revision` (String): Version der Controller-Firmware (z. B. `"4.1"`).
+  - `pcba_version` (String): Hardware-Revision der Leiterplatte (z. B. `"160307"` für PCBA 160307).
+  - `current_sensor_present` (Boolean): `true`, wenn die Wallbox über integrierte Phasenstrom-Messwandler verfügt.
+  - `rdc_md_enabled` (Boolean): `true`, wenn die elektronische 6mA-DC-Fehlerstromerkennung aktiv ist.
+  - `welding_detection_enabled` (Boolean): `true`, wenn Schützkontakt-Verschweißung automatisch überwacht wird.
+  - `outlet_enabled` (Boolean): `true`, wenn der Ladepunkt betriebsbereit und hardwaremäßig freigegeben ist.
 
 ---
 
 ### `read-system-flags`
-Liest interne System-Flags und den Zustandszeiger aus Register `0x0006` (2 Wörter / 4 Bytes).
+Liest interne Betriebs- und Diagnose-Flags aus Register `0x0006` (2 Wörter / 4 Bytes).
 
-- **Eingabe:** Keine Argumente.
-- **Konsolen-Ausgabe (formatiert):**
+- **Konsolen-Ausgabe:**
   ```text
   Raw Flags: 0x0000 (State Pointer: 0x04)
   B1->B2 Transition Disabled: false
@@ -240,14 +254,23 @@ Liest interne System-Flags und den Zustandszeiger aus Register `0x0006` (2 Wört
     "upstream_comm_lost": false
   }
   ```
+- **Felddefinitionen:**
+  - `raw_flags` (Integer): Rohwert der Systemflags als 16-Bit-Bitmaske.
+  - `state_pointer` (Integer): Zeiger auf die aktuelle Position in der internen Zustandsmaschine.
+  - `b1_b2_disabled` (Boolean): `true`, wenn automatische Ladefreigabe blockiert ist (z. B. durch externes Freigabesignal an Klemme EN1/EN2).
+  - `b1_b2_disabled_after_power_cycle` (Boolean): `true`, wenn nach Spannungsunterbrechung stets eine manuelle Neu-Freigabe erzwungen wird.
+  - `upstream_comm_lost` (Boolean): `true`, wenn der Kommunikations-Watchdog zu einem übergeordneten Master ausgelöst hat (Fehler F4/BC6).
+  - `load_imbalance_detected` (Boolean): `true`, wenn eine unzulässige Schieflast von $>20\,\text{A}$ zwischen den Phasen festgestellt wurde (BC3).
+  - `overtemperature_detected` (Boolean): `true`, wenn Gehäusetemperatur $60^\circ\text{C}$ bis $80^\circ\text{C}$ überschreitet (BC5).
+  - `phase_current_meter_fault` (Boolean): `true`, wenn bei der Strommessung ein Sensorfehler vorliegt (BC4).
+  - `e0_a1_disabled` / `a1_b1_disabled` (Boolean): Zustandsübergänge softwareseitig gesperrt.
 
 ---
 
 ### `read-modbus-settings`
-Liest die konfigurierten seriellen Schnittstellen-Parameter aus Register `0x0003` (1 Wort / 2 Bytes).
+Liest die Übertragungsparameter der seriellen Schnittstelle aus Register `0x0003`.
 
-- **Eingabe:** Keine Argumente.
-- **Konsolen-Ausgabe (formatiert):**
+- **Konsolen-Ausgabe:**
   ```text
   Baud rate: 38400 Bd, Parity: Even, Stop bits: 1
   ```
@@ -259,94 +282,85 @@ Liest die konfigurierten seriellen Schnittstellen-Parameter aus Register `0x0003
     "stop_bits": 1
   }
   ```
+- **Felddefinitionen:**
+  - `baud_rate` (Integer): Aktuelle Schnittstellengeschwindigkeit in Baud (`38400`).
+  - `parity` (String): Paritätsprüfung (`"Even"`, `"Odd"`, `"None"`).
+  - `stop_bits` (Integer): Anzahl der Stop-Bits (`1` oder `2`).
 
 ---
 
 ### `enable [AMPERES] [--power <WATTS>]`
-Aktiviert die Ladefreigabe für die Wallbox.
+Erteilt die Ladefreigabe. Schreibt das entsprechende Stromlimit in Register `0x0014`.
 
 - **Optionen:**
-  - `[AMPERES]`: Optionale Angabe in Ampere pro Phase (Standard: `16`).
-  - `--power <WATTS>`: Optional als dreiphasige Wattangabe (z. B. `--power 11000`).
-- **Konsolen-Ausgabe:**
-  ```text
-  Charging successfully enabled at 16A per phase.
-  ```
+  - `[AMPERES]`: Stromstärke pro Phase (Standard: `16`).
+  - `--power <WATTS>`: Dreiphasige Gesamtleistung (z. B. `11000`), die in Ampere umgerechnet wird.
 
 ---
 
 ### `disable [--force]`
-Entzieht der Wallbox die Ladefreigabe (setzt Stromvorgabe auf 0A / Duty Cycle 1000), wodurch das Hauptschütz abfällt und der Ladevorgang sofort stoppt.
+Entzieht der Wallbox die Ladefreigabe (schreibt `0` in Register `0x0014`), wodurch das Schütz abfällt und der Ladevorgang sofort beendet wird.
 
 - **Optionen:**
-  - `-f, --force`: Überspringt die Sicherheitsbestätigung.
-- **Konsolen-Ausgabe:**
-  ```text
-  Charging successfully disabled / halted.
-  ```
+  - `-f, --force`: Unterdrückt die Sicherheitsabfrage.
 
 ---
 
 ### `wake-up`
-Weckt schlafende Elektrofahrzeuge (On-Board-Charger) über die standardisierte Control-Pilot-Sequenz auf:
-1. Schreibt `0xE0E0` in Register `0x0005` (Zustand E0: CP-Spannung wird kurzzeitig auf 0V geschaltet).
-2. Wartet 3 Sekunden Pause.
-3. Schreibt `0xA1A1` in Register `0x0005` (Zustand A1: CP-Spannung wird wieder auf +12V gesetzt).
-Das Fahrzeug erkennt die Signaländerung wie ein erneutes Einstecken des Ladekabels und startet den Lader neu.
+Führt die genormte Control-Pilot-Sequenz zum Aufwecken schlafender Fahrzeuge aus:
+1. Setzt Register `0x0005` auf `0xE0E0` (Zustand E0: CP-Spannung kurz auf 0 V).
+2. Wartet 3 Sekunden.
+3. Setzt Register `0x0005` auf `0xA1A1` (Zustand A1: CP-Spannung zurück auf +12 V).
 
 ---
 
 ### `reset [--force]`
-Startet den Mikrocontroller der ABL EVCC2 neu (schreibt `0x5A5A` in Register `0x0005`).
+Sendet den Befehl `0x5A5A` an Register `0x0005`, um den Mikrocontroller der EVCC2-Steuerung neu zu starten.
 
 - **Optionen:**
-  - `-f, --force`: Überspringt die Sicherheitswarnung.
-- **Konsolen-Ausgabe:**
-  ```text
-  Reset command acknowledged.
-  ```
+  - `-f, --force`: Unterdrückt die Warnabfrage.
 
 ---
 
 ### `read-all`
-Kombiniert die Abfragen aus `read-firmware`, `read-system-flags` und `read-currents` in einem einzigen Diagnosebericht.
+Liest Firmware, System-Flags und alle Messwerte in einem einzigen Aufruf aus.
 
 - **JSON-Ausgabe:**
   ```json
   {
     "firmware": {
+      "current_sensor_present": true,
       "device_id": 1,
       "firmware_revision": "4.1",
+      "outlet_enabled": true,
       "pcba_version": "160307",
-      "current_sensor_present": true,
       "rdc_md_enabled": true,
-      "welding_detection_enabled": true,
-      "outlet_enabled": true
-    },
-    "system_flags": {
-      "raw_flags": 0,
-      "state_pointer": 4,
-      "b1_b2_disabled": false,
-      "b1_b2_disabled_after_power_cycle": false,
-      "upstream_comm_lost": false,
-      "load_imbalance_detected": false,
-      "overtemperature_detected": false,
-      "phase_current_meter_fault": false,
-      "e0_a1_disabled": false,
-      "a1_b1_disabled": false
+      "welding_detection_enabled": true
     },
     "measurements": {
-      "status": "WaitingForEv",
-      "ev_connected": false,
-      "duty_cycle_reduced": false,
-      "en1_closed": true,
-      "en2_closed": false,
-      "duty_cycle_permille": 267,
       "configured_current_amperes": 16.0,
       "current_l1_amperes": 0.0,
       "current_l2_amperes": 0.0,
       "current_l3_amperes": 0.0,
+      "duty_cycle_permille": 267,
+      "duty_cycle_reduced": false,
+      "en1_closed": true,
+      "en2_closed": false,
+      "ev_connected": false,
+      "status": "WaitingForEv",
       "total_power_watts": 0.0
+    },
+    "system_flags": {
+      "a1_b1_disabled": false,
+      "b1_b2_disabled": false,
+      "b1_b2_disabled_after_power_cycle": false,
+      "e0_a1_disabled": false,
+      "load_imbalance_detected": false,
+      "overtemperature_detected": false,
+      "phase_current_meter_fault": false,
+      "raw_flags": 0,
+      "state_pointer": 4,
+      "upstream_comm_lost": false
     }
   }
   ```
@@ -364,10 +378,20 @@ Führt eine kontinuierliche Abfrage im konfigurierten Intervall durch (z. B. all
   ```bash
   abl-evcc tcp 192.168.3.128:8899 daemon mqtt --mqtt-config mqtt.yaml
   ```
-- **MQTT-Steuerung (`allow_control: true` in `mqtt.yaml`):**
-  Wenn `allow_control` aktiviert ist, können folgende MQTT-Befehle an `<topic>/set/...` gesendet werden:
-  - `<topic>/set/current`: Stromstärke in Ampere pro Phase (z. B. `16` oder `0`). Gedeckelt auf `max_current`.
-  - `<topic>/set/power`: Leistung in Watt für 3 Phasen (z. B. `11000` oder `0`). Gedeckelt auf `max_current`.
-  - `<topic>/set/enable`: `"true"` (aktiviert das Laden mit dem konfigurierten `max_current`) oder `"false"` (deaktiviert das Laden).
-  - `<topic>/set/wake_up`: `"true"` (löst die Wake-Up-Sequenz E0 -> A1 aus).
-  - `<topic>/set/reset`: `"true"` (startet den Ladecontroller neu).
+- **Veröffentlichte MQTT-Topics:**
+  - `<topic>/status`: Zeichen (`A`, `B`, `C`, `D`, `E`, `F`)
+  - `<topic>/status_code`: Hex-Code (`0x00A1`, `0x00B1`, `0x00C2`, etc.)
+  - `<topic>/status_description`: Textbeschreibung des Zustands
+  - `<topic>/ev_connected`: Boolean (`true`/`false`)
+  - `<topic>/configured_current`: Stromvorgabe in Ampere pro Phase
+  - `<topic>/enabled`: Boolean (`true`, wenn Strom $\ge 6\,\text{A}$)
+  - `<topic>/current_l1`, `current_l2`, `current_l3`: Phasenströme in Ampere
+  - `<topic>/power`: Gesamt-Wirkleistung in Watt
+  - `<topic>/JSON`: Vollständiges JSON-Messwertobjekt
+
+- **MQTT-Fernsteuerung (wenn `allow_control: true` in `mqtt.yaml`):**
+  - `<topic>/set/current`: Stromeinstellung in **Ampere pro Phase** (z. B. `16` oder `0`). Gedeckelt durch `max_current`.
+  - `<topic>/set/power`: Leistungseinstellung in **Watt für 3 Phasen** (z. B. `11000` oder `0`). Gedeckelt durch `max_current`.
+  - `<topic>/set/enable`: `"true"` (aktiviert das Laden mit `max_current` pro Phase) oder `"false"` (Ladestopp).
+  - `<topic>/set/wake_up`: `"true"` (führt Wake-Up-Sequenz E0 -> A1 aus).
+  - `<topic>/set/reset`: `"true"` (startet den Controller neu).
