@@ -259,6 +259,129 @@ fn main() -> Result<()> {
         commandline::Connection::Frame { command } => {
             handle_frame_commands(command)?;
         }
+        commandline::Connection::Serial {
+            device,
+            baud_rate,
+            address,
+            command,
+        } => {
+            handle_serial_commands(device, *baud_rate, *address, command, args.timeout)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_serial_commands(
+    device: &str,
+    baud_rate: u32,
+    address: u8,
+    command: &commandline::EvccSerialCommands,
+    timeout: Duration,
+) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let (cmd, param_str) = match command {
+        commandline::EvccSerialCommands::Raw {
+            command_code,
+            parameter,
+        } => (proto::EvccCommand::from_code(*command_code), parameter.clone()),
+        commandline::EvccSerialCommands::GetFirmware => (proto::EvccCommand::GetFirmware, String::new()),
+        commandline::EvccSerialCommands::GetStatus => (proto::EvccCommand::GetStatus, String::new()),
+        commandline::EvccSerialCommands::GetInputs => (proto::EvccCommand::GetInputs, String::new()),
+        commandline::EvccSerialCommands::GetPresentPwm => (proto::EvccCommand::GetPresentPwm, String::new()),
+        commandline::EvccSerialCommands::SetPwm { parameter } => (proto::EvccCommand::SetPwm, parameter.clone()),
+        commandline::EvccSerialCommands::SetCurrent { amperes } => {
+            let param = if *amperes == 0 {
+                "0999".to_string()
+            } else {
+                match *amperes {
+                    6 => "0000".to_string(),
+                    10 => "0001".to_string(),
+                    13 => "0002".to_string(),
+                    16 => "0003".to_string(),
+                    20 => "0004".to_string(),
+                    30 => "0005".to_string(),
+                    32 => "0006".to_string(),
+                    63 => "0007".to_string(),
+                    70 => "0008".to_string(),
+                    80 => "0009".to_string(),
+                    other => {
+                        let pwm = if other <= 51 {
+                            (other as f32 / 0.06).round() as u16
+                        } else {
+                            ((other as f32 / 2.5 + 64.0) * 10.0).round() as u16
+                        };
+                        format!("{:04}", pwm.clamp(80, 970))
+                    }
+                }
+            };
+            (proto::EvccCommand::SetPwm, param)
+        }
+        commandline::EvccSerialCommands::EnablePwm => (proto::EvccCommand::EnablePwm, String::new()),
+        commandline::EvccSerialCommands::DisablePwm => (proto::EvccCommand::DisablePwm, String::new()),
+        commandline::EvccSerialCommands::GetDefaultPwm => (proto::EvccCommand::GetDefaultPwm, String::new()),
+        commandline::EvccSerialCommands::BreakCharge => (proto::EvccCommand::SetBreakCharge, String::new()),
+        commandline::EvccSerialCommands::ResumeCharge => (proto::EvccCommand::ClearBreakCharge, String::new()),
+        commandline::EvccSerialCommands::GetBreakCharge => (proto::EvccCommand::GetBreakCharge, String::new()),
+        commandline::EvccSerialCommands::SwitchToAPrime => (proto::EvccCommand::SwitchToAPrime, String::new()),
+        commandline::EvccSerialCommands::LeaveAPrime => (proto::EvccCommand::LeaveAPrime, String::new()),
+        commandline::EvccSerialCommands::Reset => (proto::EvccCommand::Reset, "1111".to_string()),
+    };
+
+    let param_opt = if param_str.is_empty() {
+        None
+    } else {
+        Some(param_str.as_str())
+    };
+
+    let req = proto::encode_evcc_request(address, cmd, param_opt);
+    trace!("Opening serial device {device} at {baud_rate} 8N1");
+    let mut port = tokio_serial::new(device, baud_rate)
+        .parity(tokio_serial::Parity::None)
+        .stop_bits(tokio_serial::StopBits::One)
+        .data_bits(tokio_serial::DataBits::Eight)
+        .timeout(timeout)
+        .open()
+        .with_context(|| format!("Cannot open serial device {device}"))?;
+
+    trace!("Sending: {:?}", req);
+    port.write_all(req.as_bytes())
+        .with_context(|| format!("Failed to write to {device}"))?;
+    port.flush().with_context(|| "Failed to flush serial port")?;
+
+    let mut reader = BufReader::new(port);
+    let mut reply = String::new();
+    reader
+        .read_line(&mut reply)
+        .with_context(|| "Failed to read reply from EVCC controller")?;
+
+    trace!("Received: {:?}", reply);
+    let (res_addr, res_cmd, param) = proto::parse_evcc_reply(&reply)?;
+    let parsed_cmd = proto::EvccCommand::from_code(res_cmd);
+    println!("Reply from EVCC module {}:", res_addr);
+    println!("  Command: {:02} ({})", res_cmd, parsed_cmd.name());
+    if let Some(p) = param {
+        println!("  Value: {}", p);
+        if res_cmd == 2 {
+            // Status code explanations
+            let desc = match p.trim() {
+                "0000" => "State A (Standby / No EV connected)",
+                "0004" => "State B2 (EV connected, charge enabled, waiting for EV)",
+                "0005" => "State C (Charging active)",
+                "0006" => "State D (Charging with ventilation)",
+                "0009" => "State B' (Charging stopped by EV)",
+                "0013" => "State B1 (EV connected, charge suspended/not enabled)",
+                "0017" => "State A' (CP off / Wake-up state)",
+                "0033" => "Error CS (Cable resistance out of range)",
+                "0035" => "Error EV (Vehicle diode fault)",
+                "0037" => "Error lock (Socket locking failed)",
+                "0039" => "Error ventilation",
+                "0255" => "State MANUAL",
+                _ => "Unknown state code",
+            };
+            println!("  Interpretation: {}", desc);
+        }
     }
 
     Ok(())

@@ -95,6 +95,70 @@ pub enum Connection {
         #[command(subcommand)]
         command: FrameCommands,
     },
+    /// Native EVCC serial ASCII communication (!n cc [param]) from docs/EVCC.pdf
+    Serial {
+        /// Serial device path (e.g. /dev/ttyUSB0 or COM1)
+        #[arg(short, long, default_value_t = default_device_name())]
+        device: String,
+
+        /// Baud rate (fixed at 38400 for native ABL EVCC)
+        #[arg(long, default_value = "38400")]
+        baud_rate: u32,
+
+        /// Module address (1 to 8, or 0 for broadcast)
+        #[arg(long, default_value = "1")]
+        address: u8,
+
+        #[command(subcommand)]
+        command: EvccSerialCommands,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone, PartialEq)]
+pub enum EvccSerialCommands {
+    /// Send raw EVCC command code with optional parameter
+    Raw {
+        command_code: u8,
+        #[arg(default_value = "")]
+        parameter: String,
+    },
+    /// Get firmware revision (Cmd 01)
+    GetFirmware,
+    /// Get state / status (Cmd 02)
+    GetStatus,
+    /// Get digital inputs E1 and E2 (Cmd 10)
+    GetInputs,
+    /// Get present charging PWM duty cycle (Cmd 11)
+    GetPresentPwm,
+    /// Set charging current / PWM (Cmd 12)
+    SetPwm {
+        /// Parameter value: 0000=6A, 0001=10A, 0002=13A, 0003=16A, 0006=32A, 0080..0970=PWM, 0999=disabled
+        parameter: String,
+    },
+    /// Set maximum charging current in Amperes (Cmd 12, converts Amperes to EVCC code)
+    SetCurrent {
+        /// Current in Amperes (0 to stop/disable, 6 to 80)
+        #[arg(value_parser = parse_current)]
+        amperes: u16,
+    },
+    /// Enable charging PWM (Cmd 13)
+    EnablePwm,
+    /// Disable charging PWM (Cmd 14)
+    DisablePwm,
+    /// Get default PWM / charging current (Cmd 26)
+    GetDefaultPwm,
+    /// Halt charging procedure at state B1 (Cmd 27, set bBreakCharge)
+    BreakCharge,
+    /// Clear charging halt at B1 / resume (Cmd 28, clear bBreakCharge)
+    ResumeCharge,
+    /// Query bBreakCharge status (Cmd 29)
+    GetBreakCharge,
+    /// Switch to state A' (turn CP off for vehicle wake-up) (Cmd 30)
+    SwitchToAPrime,
+    /// Leave state A' and return to A (turn CP on) (Cmd 31)
+    LeaveAPrime,
+    /// Reset controller (Cmd 00 1111)
+    Reset,
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
