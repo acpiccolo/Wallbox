@@ -206,58 +206,7 @@ impl MqttPublisher {
         })
     }
 
-    pub fn publish_values(
-        &self,
-        values: &abl_evcc_lib::tokio_common::AllValues,
-        no_json: bool,
-    ) -> Result<()> {
-        if !self.client.is_connected() {
-            if !self.was_disconnected.swap(true, Ordering::SeqCst) {
-                log::warn!("MQTT connection lost! Automatic reconnect is active in the background...");
-            }
-            return Ok(());
-        }
-
-        if self.was_disconnected.swap(false, Ordering::SeqCst) {
-            log::info!("MQTT connection re-established successfully.");
-        }
-
-        macro_rules! pub_msg {
-            ($label:expr, $val:expr) => {
-                self.client
-                    .publish(paho_mqtt::Message::new(
-                        format!("{}/{}", self.topic, $label),
-                        $val.to_string(),
-                        self.qos,
-                    ))
-                    .with_context(|| "Cannot publish MQTT message")?;
-            };
-        }
-
-        // EVCC1 topics: status, status_code, max_current, power_or_current
-        pub_msg!("status", values.status.0.as_char());
-        pub_msg!("status_description", values.status.0.description());
-        pub_msg!("status_code", values.status.0.raw_code());
-        pub_msg!("max_current", values.max_current.0);
-        pub_msg!("enabled", values.max_current.is_enabled());
-        pub_msg!("power_or_current", values.power_or_current.0);
-
-        if !no_json {
-            let payload = serde_json::to_string(values)?;
-            let msg = paho_mqtt::Message::new(
-                format!("{}/JSON", self.topic),
-                payload,
-                self.qos,
-            );
-            self.client
-                .publish(msg)
-                .with_context(|| "Cannot publish MQTT message")?;
-        }
-
-        Ok(())
-    }
-
-    pub fn publish_evcc2_measurements(
+    pub fn publish_measurements(
         &self,
         meas: &abl_evcc_lib::protocol::Evcc2Measurements,
         firmware: Option<&abl_evcc_lib::protocol::Evcc2Firmware>,

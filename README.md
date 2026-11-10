@@ -1,159 +1,149 @@
-# ABL EVCC1 Wallbox Modbus Library and Tool
+# ABL eMH1 Wallbox Tool (Modbus ASCII)
 
-This repository contains a Rust library and a command-line tool for interacting with ABL EVCC1 series charge controllers (e.g. used in ABL eMH1 wallboxes) via the Modbus protocol (ASCII / RTU / TCP).
+This repository contains a Rust library and command-line tool for interacting with **ABL eMH1** (and eMH2 / EVCC2/3) wallboxes over **Modbus ASCII**.
 
 ## Table of Contents
-- [EVCC1 Modbus Register Mapping](#evcc1-modbus-register-mapping)
-- [Hardware Requirements](#hardware-requirements)
-- [Technical Documentation](#technical-documentation)
-- [Technical Specifications](#technical-specifications)
-- [Installation & Compilation](#installation--compilation)
+- [Overview](#overview)
+- [Modbus ASCII Protocol & Registers](#modbus-ascii-protocol--registers)
+- [Connection Methods](#connection-methods)
 - [Command-Line Usage](#command-line-usage)
-- [MQTT Configuration](#mqtt-configuration-mqttyaml--environment-variables)
-- [Library Usage](#library-usage)
-- [Cargo Features](#cargo-features)
+- [Daemon Mode & MQTT](#daemon-mode--mqtt)
+- [Technical Documentation](#technical-documentation)
 - [License](#license)
 
-## EVCC1 Modbus Register Mapping
-| Register (Dezimal) | Typ / Richtung | Funktion / Beschreibung bei EVCC1 |
-|:---:|:---:|:---|
-| **256** (`0x0100`) | Read (Holding) | **Ladestatus (Fahrzeug-Status):** Liefert numerische ASCII-Werte zurück (z. B. 65 = 'A' Standby/Bereit, 66 = 'B' Fahrzeug verbunden, 67 = 'C' Ladevorgang aktiv, 68 = 'D' Belüftung, 69 = 'E', 70 = 'F' Fehler). |
-| **257** (`0x0101`) | Read / Write | **Maximaler Ladestrom (Vorgabe / Status):** Dient gleichzeitig als Statusabfrage für die Freigabe und zum Einstellen der Stromstärke (z. B. Wert 16 für 16A, 0 für Ladestopp / Freigabe entzogen, Bereich 6..80A bzw. 0). |
-| **258** (`0x0102`) | Read (Holding) | **Aktuelle Ladeleistung / Stromstärke:** Rohwert für Leistung oder Phasenströme je nach Firmware der eMH1. |
+---
 
-## Hardware Requirements
-To use this tool, you need:
-- An **ABL Wallbox (e.g., eMH1)** or any EVSE with an **EVCC1 charge controller**.
-- A **USB-to-RS485 converter** (for RTU/ASCII mode) or a **Modbus TCP gateway**.
+## Overview
+ABL eMH1 wallboxes communicate via **Modbus ASCII** (default 38400 Baud, 8E1).
+Requests start with `:` (`0x3A`), responses start with `>` (`0x3E`), and frames are terminated with `\r\n` (`0x0D 0x0A`) with a Longitudinal Redundancy Check (LRC) checksum.
 
-## Technical Documentation
-For more detailed information, please refer to the documentation in the [`docs/`](./docs/) directory:
-- [`docs/EVCC1_Modbus_Register.md`](./docs/EVCC1_Modbus_Register.md) – Nachweise und detaillierte Registerspezifikation.
-- [`docs/EVCC.pdf`](./docs/EVCC.pdf) – Offizielle ABL SURSUM EVCC Montage- und Bedienungsanleitung (Dok. Nr. 03 0009 01 D).
-- [`docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf`](./docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf) – Offizielle ABL EVCC2/3 Schnittstellenspezifikation.
+This tool supports:
+- Direct **TCP connections** to transparent RS485-to-Ethernet/Wi-Fi serial adapters (such as **Elfin EW11**, USR-TCP232, Protoss-PE11, etc.) without requiring `socat`.
+- Direct **Serial connections** to local or virtual serial ports (e.g. `/dev/ttyUSB0`, `/dev/ttyElfin`, or Windows COM ports).
+- Reading state machine charging status according to IEC 61851-1.
+- Reading 3-phase charging currents (L1, L2, L3) and active power in Watts.
+- Setting charging current limits (from 6A to 80A, or 0A to stop/halt).
+- Vehicle wake-up sequence via state cycling (E0 -> A1).
+- Continuous daemon mode publishing to standard output or an MQTT broker.
 
-## Technical Specifications
-| Feature | Details |
-|---|---|
-| **Default Baud Rate** | 38400 Bd |
-| **Data Format** | 8E1 (8 data bits, Even parity, 1 stop bit) |
-| **Supported Functions**| 0x03 (Read holding registers), 0x10 (Write multiple registers) |
-| **Device IDs** | 0x01..0x10 (0x00 for Broadcast) |
-| **Checksum** | Longitudinal Redundancy Check (LRC) / Modbus RTU CRC |
+---
 
-## Installation & Compilation
+## Modbus ASCII Protocol & Registers
 
-### Prerequisites
-Ensure you have the following dependencies installed:
-- **Rust and Cargo**: Install via [rustup](https://rustup.rs/)
-- **Git**: To clone the repository
-- A C compiler and linker
+The tool implements the official ABL EVCC2/3 specification:
 
-### Building from Source
-1. **Clone the repository**:
-   ```sh
-   git clone https://github.com/acpiccolo/ABL-EVCC-Wallbox.git
-   cd ABL-EVCC-Wallbox
-   ```
-2. **Compile the project**:
-   ```sh
-   cargo build --release
-   ```
-   The compiled binary will be available at:
-   ```sh
-   target/release/abl-evcc
-   ```
-3. **(Optional) Install the binary system-wide**:
-   ```sh
-   cargo install --path .
-   ```
+| Register | Name / Function | Type | Description |
+|:---:|:---|:---:|:---|
+| **`0x0001`** | Read Device ID & Firmware | Read (2 words) | Hardware/PCBA revision, firmware version, and hardware flags (internal current sensor, RDC-MD, contactor monitor). |
+| **`0x0004`** | Read State Machine Status | Read (1 word) | Detailed state machine position: `0xA1` (Waiting for EV), `0xB1` (EV asking for charge), `0xB2` (EV permitted to charge), `0xC2` (Charging), error codes `0xF1`–`0xFB`. |
+| **`0x0005`** | Modify State | Write (1 word) | `0xE0E0` (jump to E0 outlet disabled), `0xA1A1` (jump to A1 waiting for EV), `0x5A5A` (reset). Used for vehicle wake-up. |
+| **`0x0014`** | Set Maximum Current / Duty Cycle | Write (1 word) | Duty cycle in 0.1% steps (`Amperes / 0.06`). `1000` (`0x03E8`) = disabled / charging prohibited. |
+| **`0x002E`** | Full Status & Phase Currents | Read (5 words) | Status byte, EV connection flag, configured current, and 3-phase currents in 0.1A resolution (`I_L1`, `I_L2`, `I_L3`). |
+
+---
+
+## Connection Methods
+
+### 1. Direct Network Connection via Serial Server (e.g. Elfin EW11)
+Connect directly without needing `socat`:
+```bash
+abl-evcc --tcp 192.168.3.128:8899 read-status
+```
+
+### 2. Local Serial Port (RS485 USB Adapter or Virtual PTY)
+```bash
+abl-evcc --device /dev/ttyElfin read-status
+```
+
+---
 
 ## Command-Line Usage
-### View Available Commands
-```sh
-abl-evcc --help
-```
-### Read All Values via RTU (RS485)
-```sh
-abl-evcc rtu --device /dev/ttyUSB0 --baud-rate 38400 --address 1 read-all
-```
-### Read Status (Register 256)
-```sh
-abl-evcc rtu --address 1 read-status
-```
-### Read & Set Charging Current (Register 257)
-```sh
-# Read current limit:
-abl-evcc rtu --address 1 read-current
 
-# Set charging current to 16A:
-abl-evcc rtu --address 1 set-current 16
-
-# Stop charging (0A):
-abl-evcc rtu --address 1 set-current 0
+### Read Wallbox Charging Status
+```bash
+abl-evcc --tcp 192.168.3.128:8899 read-status
 ```
-### Read Power or Current (Register 258)
-```sh
-abl-evcc rtu --address 1 read-power
+Example JSON output:
+```json
+"State A (0x00A1): Waiting for EV (Standby)"
 ```
-### Read Values via TCP Gateway
-```sh
-abl-evcc tcp 192.168.1.100:502 read-all
+With `--no-json`:
+```
+State A (0x00A1): Waiting for EV (Standby)
 ```
 
-### Daemon Mode with MQTT
-You can run the tool as a daemon that publishes data to an MQTT broker.
+### Read All Measurements (Status, Currents, Power, Firmware)
+```bash
+abl-evcc --tcp 192.168.3.128:8899 read-all
+```
+
+### Read 3-Phase Currents & Active Power
+```bash
+abl-evcc --tcp 192.168.3.128:8899 read-currents
+```
+
+### Read Configured Charging Current
+```bash
+abl-evcc --tcp 192.168.3.128:8899 read-current
+```
+
+### Set Charging Current
+```bash
+# Set limit to 16 Amperes:
+abl-evcc --tcp 192.168.3.128:8899 set-current 16
+
+# Stop / halt charging (0 Amperes):
+abl-evcc --tcp 192.168.3.128:8899 set-current 0
+```
+
+### Enable / Disable Charging
+```bash
+# Enable at 16A:
+abl-evcc --tcp 192.168.3.128:8899 enable 16
+
+# Disable charging:
+abl-evcc --tcp 192.168.3.128:8899 disable
+```
+
+### Wake Up Vehicle
+Cycles Control Pilot state (E0 -> wait 3s -> A1) to wake up sleeping EV onboard chargers:
+```bash
+abl-evcc --tcp 192.168.3.128:8899 wake-up
+```
+
+---
+
+## Daemon Mode & MQTT
+
+Continuously polls wallbox data and logs to console or publishes to MQTT:
 
 - **Log to Console:**
-  ```sh
-  abl-evcc rtu --address 1 daemon console
+  ```bash
+  abl-evcc --tcp 192.168.3.128:8899 daemon console
   ```
 
-- **Publish to MQTT:**
-  ```sh
-  abl-evcc rtu --address 1 daemon mqtt --mqtt-config /path/to/mqtt.yaml
+- **Publish to MQTT Broker:**
+  ```bash
+  abl-evcc --tcp 192.168.3.128:8899 daemon mqtt --mqtt-config mqtt.yaml
   ```
-  If `--mqtt-config` is omitted, `mqtt.yaml` is loaded from the current directory.
 
-  Published topics:
-  - `<topic>/status`: ASCII letter (`A`, `B`, `C`, etc.)
-  - `<topic>/status_code`: ASCII integer (65, 66, 67, etc.)
+  Published MQTT topics:
+  - `<topic>/status`: Character (`A`, `B`, `C`, `D`, `E`, `F`)
+  - `<topic>/status_code`: Hex code (`0x00A1`, `0x00B1`, `0x00C2`, etc.)
   - `<topic>/status_description`: Human-readable status description
-  - `<topic>/max_current`: Configured charging current in Amperes
-  - `<topic>/enabled`: Boolean indicating if charging is allowed (`true` if current >= 6A)
-  - `<topic>/power_or_current`: Measurement value from register 258
-  - `<topic>/JSON`: Full JSON object with all values
+  - `<topic>/ev_connected`: Boolean (`true`/`false`)
+  - `<topic>/configured_current`: Configured charging current in Amperes
+  - `<topic>/enabled`: Boolean indicating if charging is active (`true` if current >= 6A)
+  - `<topic>/current_l1`: Phase 1 current in Amperes
+  - `<topic>/current_l2`: Phase 2 current in Amperes
+  - `<topic>/current_l3`: Phase 3 current in Amperes
+  - `<topic>/power`: Total calculated active charging power in Watts
+  - `<topic>/JSON`: Full JSON object with all measurement values
 
-## Library Usage
-The `abl_evcc_lib` crate provides high-level and low-level interfaces for EVCC1 controllers:
+---
 
-```rust
-use abl_evcc_lib::tokio_sync_safe_client::SafeClient;
-use std::time::Duration;
-use tokio_modbus::client::sync::tcp;
-use tokio_modbus::Slave;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let socket_addr = "192.168.1.100:502".parse()?;
-    let ctx = tcp::connect_slave(socket_addr, Slave(1))?;
-    let client = SafeClient::new(ctx);
-
-    let values = client.read_all(&Duration::from_millis(50))?;
-    println!("Values: {:#?}", values);
-
-    Ok(())
-}
-```
-
-## Cargo Features
-- **`default`**: Enables `bin-dependencies` for the CLI tool.
-- **`tokio-rtu-sync`**: Synchronous RTU client.
-- **`tokio-tcp-sync`**: Synchronous TCP client.
-- **`tokio-rtu`**: Asynchronous RTU client.
-- **`tokio-tcp`**: Asynchronous TCP client.
-- **`safe-client-sync`**: Thread-safe synchronous wrapper.
-- **`safe-client-async`**: Thread-safe asynchronous wrapper.
-- **`serde`**: Serialization/deserialization support for protocol structs.
+## Technical Documentation
+- [`docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf`](./docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf) – Official ABL EVCC2/3 specification.
 
 ## License
-Licensed under either of Apache License, Version 2.0 or MIT license at your option.
+Licensed under either Apache License, Version 2.0 or MIT license at your option.
