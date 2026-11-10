@@ -201,7 +201,8 @@ In `mqtt.yaml`, `max_current` (default: `1`) defines the **maximum charging curr
 ---
 
 ## Technical Documentation
-- [`docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf`](./docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf) – Official ABL EVCC2/3 specification.
+- [`docs/ABL_eMH1_Command_and_Value_Reference.md`](./docs/ABL_eMH1_Command_and_Value_Reference.md) – Ausführliche Befehls-, Werte- und Register-Referenz mit Glossar (CP, CS, PWM, Duty Cycle, RDC-MD, etc.) und Beispiel-Ausgaben.
+- [`docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf`](./docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf) – Official ABL EVCC2/3 Modbus ASCII specification.
 
 ## License
 Licensed under either Apache License, Version 2.0 or MIT license at your option.
