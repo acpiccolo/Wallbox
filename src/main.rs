@@ -9,6 +9,8 @@ mod commandline;
 mod daemon;
 mod mqtt;
 
+/// Calculates the minimum serial inter-frame delay based on baud rate (minimum 3.5 character times).
+/// Reference: <https://minimalmodbus.readthedocs.io/en/stable/serialcommunication.html#timing-of-the-serial-communications>
 pub fn minimum_serial_delay(baud_rate: u32) -> Duration {
     // Timing of serial communications (minimum 3.5 character times)
     let rate = baud_rate as f64;
