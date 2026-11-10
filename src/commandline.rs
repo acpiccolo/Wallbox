@@ -29,9 +29,17 @@ pub fn parse_current(s: &str) -> Result<u16, String> {
     }
 }
 
+fn default_device_name() -> String {
+    if cfg!(target_os = "windows") {
+        "COM1".to_string()
+    } else {
+        "/dev/ttyUSB0".to_string()
+    }
+}
+
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParityAndStopBit {
-    #[value(name = "ep1b", help = "even parity, one stop bit (default for ABL eMH1)")]
+    #[value(name = "ep1b", help = "even parity, one stop bit (default for ABL eMH1 8E1)")]
     EvenParityOneStopBit,
     #[value(name = "np1b", help = "no parity, one stop bit")]
     NoParityOneStopBit,
@@ -45,6 +53,43 @@ impl Default for ParityAndStopBit {
     fn default() -> Self {
         Self::EvenParityOneStopBit
     }
+}
+
+#[derive(Subcommand, Debug, Clone, PartialEq)]
+pub enum Connection {
+    /// Connect via local or virtual serial device (Modbus ASCII over RS485 / PTY)
+    Ascii {
+        /// Serial device path (e.g. /dev/ttyElfin, /dev/ttyUSB0, COM1)
+        #[arg(short, long, default_value_t = default_device_name())]
+        device: String,
+
+        /// Baud rate (default: 38400 for ABL eMH1)
+        #[arg(long, default_value = "38400")]
+        baud_rate: u32,
+
+        /// Modbus slave address from 1 to 16
+        #[arg(long, default_value = "1", value_parser = parse_address)]
+        address: u8,
+
+        /// Parity and stop bits (default: ep1b for 8E1)
+        #[arg(long, default_value = "ep1b")]
+        parity_and_stop_bit: ParityAndStopBit,
+
+        #[command(subcommand)]
+        command: Commands,
+    },
+    /// Connect via direct TCP to transparent serial server (e.g. Elfin EW11 at 192.168.3.128:8899)
+    Tcp {
+        /// TCP server address (e.g. 192.168.3.128:8899)
+        address: String,
+
+        /// Modbus slave address from 1 to 16
+        #[arg(short, long, default_value = "1", value_parser = parse_address)]
+        slave: u8,
+
+        #[command(subcommand)]
+        command: Commands,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
@@ -112,25 +157,9 @@ pub struct Args {
     #[arg(long, default_value = "false")]
     pub no_json: bool,
 
-    /// Serial device path (e.g. /dev/ttyElfin, /dev/ttyUSB0, COM1)
-    #[arg(short, long)]
-    pub device: Option<String>,
-
-    /// Direct TCP address of transparent serial server (e.g. 192.168.3.128:8899)
-    #[arg(long)]
-    pub tcp: Option<String>,
-
-    /// Baud rate for serial device (default: 38400 for ABL eMH1)
-    #[arg(long, default_value = "38400")]
-    pub baud_rate: u32,
-
-    /// Modbus slave address (1..=16, default: 1)
-    #[arg(long, default_value = "1", value_parser = parse_address)]
-    pub address: u8,
-
-    /// Parity and stop bits for serial device
-    #[arg(long, default_value = "ep1b")]
-    pub parity_and_stop_bit: ParityAndStopBit,
+    /// Connection type (ascii or tcp)
+    #[command(subcommand)]
+    pub connection: Connection,
 
     /// Modbus operations timeout
     #[arg(value_parser = parse_duration, long, default_value = "3000ms")]
@@ -139,7 +168,4 @@ pub struct Args {
     /// Delay between retry operations
     #[arg(value_parser = parse_duration, long, default_value = "100ms")]
     pub delay: Duration,
-
-    #[command(subcommand)]
-    pub command: Commands,
 }

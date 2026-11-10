@@ -177,56 +177,50 @@ fn main() -> Result<()> {
     let args = commandline::Args::parse();
     let _log_handle = logging_init(args.verbose.log_level_filter());
 
-    let (parity, stop_bits) = match args.parity_and_stop_bit {
-        commandline::ParityAndStopBit::EvenParityOneStopBit => {
-            (tokio_serial::Parity::Even, tokio_serial::StopBits::One)
-        }
-        commandline::ParityAndStopBit::NoParityOneStopBit => {
-            (tokio_serial::Parity::None, tokio_serial::StopBits::One)
-        }
-        commandline::ParityAndStopBit::OddParityOneStopBit => {
-            (tokio_serial::Parity::Odd, tokio_serial::StopBits::One)
-        }
-        commandline::ParityAndStopBit::NoParityTwoStopBits => {
-            (tokio_serial::Parity::None, tokio_serial::StopBits::Two)
-        }
-    };
-
-    let mut client = match (args.device.as_deref(), args.tcp.as_deref()) {
-        (Some(_), Some(_)) => {
-            anyhow::bail!("Cannot specify both --device and --tcp. Choose one transport.")
-        }
-        (None, None) => {
-            let default_dev = if cfg!(target_os = "windows") {
-                "COM1"
-            } else {
-                "/dev/ttyUSB0"
+    match &args.connection {
+        commandline::Connection::Ascii {
+            device,
+            baud_rate,
+            address,
+            parity_and_stop_bit,
+            command,
+        } => {
+            let (parity, stop_bits) = match parity_and_stop_bit {
+                commandline::ParityAndStopBit::EvenParityOneStopBit => {
+                    (tokio_serial::Parity::Even, tokio_serial::StopBits::One)
+                }
+                commandline::ParityAndStopBit::NoParityOneStopBit => {
+                    (tokio_serial::Parity::None, tokio_serial::StopBits::One)
+                }
+                commandline::ParityAndStopBit::OddParityOneStopBit => {
+                    (tokio_serial::Parity::Odd, tokio_serial::StopBits::One)
+                }
+                commandline::ParityAndStopBit::NoParityTwoStopBits => {
+                    (tokio_serial::Parity::None, tokio_serial::StopBits::Two)
+                }
             };
-            AsciiClient::connect_serial(
-                default_dev,
-                args.baud_rate,
+
+            let mut client = AsciiClient::connect_serial(
+                device,
+                *baud_rate,
                 parity,
                 stop_bits,
-                args.address,
+                *address,
                 args.timeout,
                 args.delay,
-            )?
+            )?;
+            handle_commands(&mut client, command, args.delay, args.no_json)?;
         }
-        (Some(dev), None) => AsciiClient::connect_serial(
-            dev,
-            args.baud_rate,
-            parity,
-            stop_bits,
-            args.address,
-            args.timeout,
-            args.delay,
-        )?,
-        (None, Some(tcp)) => {
-            AsciiClient::connect_tcp(tcp, args.address, args.timeout, args.delay)?
+        commandline::Connection::Tcp {
+            address,
+            slave,
+            command,
+        } => {
+            let mut client =
+                AsciiClient::connect_tcp(address, *slave, args.timeout, args.delay)?;
+            handle_commands(&mut client, command, args.delay, args.no_json)?;
         }
-    };
-
-    handle_commands(&mut client, &args.command, args.delay, args.no_json)?;
+    }
 
     Ok(())
 }

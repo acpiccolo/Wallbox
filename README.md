@@ -5,7 +5,7 @@ This repository contains a Rust library and command-line tool for interacting wi
 ## Table of Contents
 - [Overview](#overview)
 - [Modbus ASCII Protocol & Registers](#modbus-ascii-protocol--registers)
-- [Connection Methods](#connection-methods)
+- [Connection Methods (`ascii` vs `tcp`)](#connection-methods-ascii-vs-tcp)
 - [Command-Line Usage](#command-line-usage)
 - [Daemon Mode & MQTT](#daemon-mode--mqtt)
 - [Technical Documentation](#technical-documentation)
@@ -17,14 +17,9 @@ This repository contains a Rust library and command-line tool for interacting wi
 ABL eMH1 wallboxes communicate via **Modbus ASCII** (default 38400 Baud, 8E1).
 Requests start with `:` (`0x3A`), responses start with `>` (`0x3E`), and frames are terminated with `\r\n` (`0x0D 0x0A`) with a Longitudinal Redundancy Check (LRC) checksum.
 
-This tool supports:
-- Direct **TCP connections** to transparent RS485-to-Ethernet/Wi-Fi serial adapters (such as **Elfin EW11**, USR-TCP232, Protoss-PE11, etc.) without requiring `socat`.
-- Direct **Serial connections** to local or virtual serial ports (e.g. `/dev/ttyUSB0`, `/dev/ttyElfin`, or Windows COM ports).
-- Reading state machine charging status according to IEC 61851-1.
-- Reading 3-phase charging currents (L1, L2, L3) and active power in Watts.
-- Setting charging current limits (from 6A to 80A, or 0A to stop/halt).
-- Vehicle wake-up sequence via state cycling (E0 -> A1).
-- Continuous daemon mode publishing to standard output or an MQTT broker.
+This tool provides two direct connection modes:
+- **`tcp`**: Connects directly via TCP to transparent serial servers (such as **Elfin EW11**, USR-TCP232, Protoss-PE11, etc.) without requiring `socat`.
+- **`ascii`**: Connects via local serial devices or virtual serial ports (e.g. `/dev/ttyUSB0`, `/dev/ttyElfin`, or Windows COM ports) with configurable baud rate, parity, stop bits, and address.
 
 ---
 
@@ -42,26 +37,40 @@ The tool implements the official ABL EVCC2/3 specification:
 
 ---
 
-## Connection Methods
+## Connection Methods (`ascii` vs `tcp`)
 
-### 1. Direct Network Connection via Serial Server (e.g. Elfin EW11)
+### 1. `tcp` Mode (Direct Network Connection via Serial Server, e.g. Elfin EW11)
 Connect directly without needing `socat`:
 ```bash
-abl-evcc --tcp 192.168.3.128:8899 read-status
+abl-evcc tcp 192.168.3.128:8899 read-status
 ```
+Options:
+- `-s, --slave <SLAVE>`: Modbus slave ID (default: `1`)
 
-### 2. Local Serial Port (RS485 USB Adapter or Virtual PTY)
+### 2. `ascii` Mode (Local Serial Port or Virtual PTY)
+Connect over RS485 USB converter or existing virtual PTY (e.g. `/dev/ttyElfin`):
 ```bash
-abl-evcc --device /dev/ttyElfin read-status
+abl-evcc ascii --device /dev/ttyElfin read-status
 ```
+Configurable options:
+- `-d, --device <DEVICE>`: Serial device path (default: `/dev/ttyUSB0`)
+- `--baud-rate <BAUD>`: Baud rate (default: `38400`)
+- `--parity-and-stop-bit <PARITY>`: Parity and stop bits (`ep1b` for 8E1 [default], `np1b` for 8N1, `op1b` for 8O1, `np2b` for 8N2)
+- `--address <ADDRESS>`: Modbus slave address 1..16 (default: `1`)
 
 ---
 
 ## Command-Line Usage
 
+Both `tcp` and `ascii` support identical subcommands:
+
 ### Read Wallbox Charging Status
 ```bash
-abl-evcc --tcp 192.168.3.128:8899 read-status
+# Via direct TCP:
+abl-evcc tcp 192.168.3.128:8899 read-status
+
+# Via serial port:
+abl-evcc ascii --device /dev/ttyElfin read-status
 ```
 Example JSON output:
 ```json
@@ -74,57 +83,58 @@ State A (0x00A1): Waiting for EV (Standby)
 
 ### Read All Measurements (Status, Currents, Power, Firmware)
 ```bash
-abl-evcc --tcp 192.168.3.128:8899 read-all
+abl-evcc tcp 192.168.3.128:8899 read-all
 ```
 
 ### Read 3-Phase Currents & Active Power
 ```bash
-abl-evcc --tcp 192.168.3.128:8899 read-currents
+abl-evcc tcp 192.168.3.128:8899 read-currents
 ```
 
 ### Read Configured Charging Current
 ```bash
-abl-evcc --tcp 192.168.3.128:8899 read-current
+abl-evcc tcp 192.168.3.128:8899 read-current
 ```
 
 ### Set Charging Current
 ```bash
 # Set limit to 16 Amperes:
-abl-evcc --tcp 192.168.3.128:8899 set-current 16
+abl-evcc tcp 192.168.3.128:8899 set-current 16
 
 # Stop / halt charging (0 Amperes):
-abl-evcc --tcp 192.168.3.128:8899 set-current 0
+abl-evcc tcp 192.168.3.128:8899 set-current 0
 ```
 
 ### Enable / Disable Charging
 ```bash
 # Enable at 16A:
-abl-evcc --tcp 192.168.3.128:8899 enable 16
+abl-evcc tcp 192.168.3.128:8899 enable 16
 
 # Disable charging:
-abl-evcc --tcp 192.168.3.128:8899 disable
+abl-evcc tcp 192.168.3.128:8899 disable
 ```
 
 ### Wake Up Vehicle
 Cycles Control Pilot state (E0 -> wait 3s -> A1) to wake up sleeping EV onboard chargers:
 ```bash
-abl-evcc --tcp 192.168.3.128:8899 wake-up
+abl-evcc tcp 192.168.3.128:8899 wake-up
 ```
 
 ---
 
 ## Daemon Mode & MQTT
 
-Continuously polls wallbox data and logs to console or publishes to MQTT:
+Both `tcp` and `ascii` modes support continuous polling:
 
 - **Log to Console:**
   ```bash
-  abl-evcc --tcp 192.168.3.128:8899 daemon console
+  abl-evcc tcp 192.168.3.128:8899 daemon console
+  abl-evcc ascii --device /dev/ttyElfin daemon console
   ```
 
 - **Publish to MQTT Broker:**
   ```bash
-  abl-evcc --tcp 192.168.3.128:8899 daemon mqtt --mqtt-config mqtt.yaml
+  abl-evcc tcp 192.168.3.128:8899 daemon mqtt --mqtt-config mqtt.yaml
   ```
 
   Published MQTT topics:
