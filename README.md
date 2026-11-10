@@ -189,11 +189,14 @@ Continuously polls wallbox data and logs to console or publishes to an MQTT brok
 
 ### Bidirectional Control via MQTT:
 When `allow_control: true` is set in `mqtt.yaml` (default: `false`), the daemon subscribes to `<topic>/set/#` and allows remote control:
-- `<topic>/set/current`: Sets maximum current in Amperes per phase (e.g. `16` or `0` to stop).
-- `<topic>/set/power`: Sets 3-phase power in Watts (e.g. `11000` or `0` to stop).
-- `<topic>/set/enable`: Boolean (`true` / `on` to enable at 16A, `false` / `off` to disable).
+- `<topic>/set/current`: Sets maximum current in Amperes per phase (e.g. `16` or `0` to stop). Capped by `max_current`.
+- `<topic>/set/power`: Sets 3-phase power in Watts (e.g. `11000` or `0` to stop). Capped by `max_current`.
+- `<topic>/set/enable`: Boolean (`true` / `on` to enable at `max_current`, `false` / `off` to disable).
 - `<topic>/set/wake_up`: Set to `true` / `1` to trigger vehicle wake-up sequence.
 - `<topic>/set/reset`: Set to `true` / `1` to restart the EVCC2 charge controller.
+
+#### MQTT `max_current` Safety Limit:
+In `mqtt.yaml`, `max_current` (default: `1`) defines the **maximum charging current in Amperes per phase** that can be requested via MQTT. Any incoming current or power command exceeding this limit is automatically capped, and when enabling charging via MQTT, `max_current` is used as the target current.
 
 ---
 
