@@ -50,19 +50,19 @@ pub fn serial_port_builder(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AllValues {
-    /// Register 256: Ladestatus (Fahrzeug-Status)
+    /// Register 256: Charging status (vehicle status)
     pub status: proto::ChargeStatus,
-    /// Register 257: Maximaler Ladestrom (Vorgabe / Freigabestatus) in Ampere
+    /// Register 257: Maximum charging current (setpoint / enable status) in Amperes
     pub max_current: proto::ChargingCurrent,
-    /// Register 258: Aktuelle Ladeleistung / Stromstärke
+    /// Register 258: Active charging power or current
     pub power_or_current: proto::PowerOrCurrent,
 }
 
 impl std::fmt::Display for AllValues {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(fmt, "Ladestatus: {}", self.status)?;
-        writeln!(fmt, "Max. Ladestrom: {}", self.max_current)?;
-        write!(fmt, "Ladeleistung / Stromstärke: {}", self.power_or_current)?;
+        writeln!(fmt, "Charging status: {}", self.status)?;
+        writeln!(fmt, "Max. current: {}", self.max_current)?;
+        write!(fmt, "Charging power / current: {}", self.power_or_current)?;
         Ok(())
     }
 }

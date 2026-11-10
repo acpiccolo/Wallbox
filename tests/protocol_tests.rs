@@ -81,7 +81,7 @@ mod tests {
     fn test_register_258_power_or_current() {
         let val = PowerOrCurrent::decode_from_words(&[3680]).unwrap();
         assert_eq!(val.raw(), 3680);
-        assert_eq!(val.to_string(), "Wert: 3680");
+        assert_eq!(val.to_string(), "Value: 3680");
     }
 
     #[test]

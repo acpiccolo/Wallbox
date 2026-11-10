@@ -1,9 +1,9 @@
 //! This module defines the core data structures, protocol framing, and traits for the EVCC1 Modbus protocol.
 //!
 //! Registers (decimal):
-//! - 256 (0x0100): Ladestatus (Fahrzeug-Status) - ASCII values, e.g. 65 ('A' = Standby/Ready), 66 ('B' = Connected), 67 ('C' = Charging)
-//! - 257 (0x0101): Maximaler Ladestrom (Vorgabe/Status) - Read/Write holding register in Amperes (e.g. 16 = 16A, 0 = Disabled)
-//! - 258 (0x0102): Aktuelle Ladeleistung / Stromstärke (Read Holding)
+//! - 256 (0x0100): Charging status (Vehicle status) - ASCII values, e.g. 65 ('A' = Standby/Ready), 66 ('B' = Connected), 67 ('C' = Charging)
+//! - 257 (0x0101): Maximum charging current (Setpoint/Status) - Read/Write holding register in Amperes (e.g. 16 = 16A, 0 = Disabled)
+//! - 258 (0x0102): Active charging power / current (Read Holding)
 
 /// Represents errors that can occur within the EVCC protocol logic or Modbus ASCII framing.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -241,13 +241,13 @@ impl VehicleStatus {
 
     pub fn description(&self) -> &'static str {
         match self {
-            Self::Ready => "Standby / Bereit (kein Fahrzeug verbunden)",
-            Self::Connected => "Fahrzeug verbunden (wartet auf Ladefreigabe)",
-            Self::Charging => "Ladevorgang aktiv (Fahrzeug lädt)",
-            Self::Ventilation => "Ladevorgang mit externer Belüftung",
-            Self::Disabled => "Ladepunkt deaktiviert / Ausgeschaltet",
-            Self::Fault => "Fehlerzustand (Fault / Error)",
-            Self::Other(_) => "Unbekannter Status",
+            Self::Ready => "Standby / Ready (no vehicle connected)",
+            Self::Connected => "Vehicle connected (waiting for charge enable)",
+            Self::Charging => "Charging active (vehicle is charging)",
+            Self::Ventilation => "Charging with external ventilation",
+            Self::Disabled => "Charge point disabled / switched off",
+            Self::Fault => "Fault / error condition",
+            Self::Other(_) => "Unknown status",
         }
     }
 }
@@ -264,7 +264,7 @@ impl std::fmt::Display for VehicleStatus {
     }
 }
 
-/// Modbus holding register 256: Ladestatus
+/// Modbus holding register 256: Charging status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChargeStatus(pub VehicleStatus);
@@ -291,10 +291,10 @@ impl std::fmt::Display for ChargeStatus {
 }
 
 // -----------------------------------------------------------------------------
-// Register 257 (0x0101): Maximaler Ladestrom (Read / Write Holding, 1 word)
+// Register 257 (0x0101): Maximum charging current (Read / Write Holding, 1 word)
 // -----------------------------------------------------------------------------
 
-/// Modbus holding register 257: Maximaler Ladestrom in Ampere (z.B. 16 für 16A, 0 für Stopp)
+/// Modbus holding register 257: Maximum charging current in Amperes (e.g. 16 for 16A, 0 for stop)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChargingCurrent(pub u16);
@@ -333,7 +333,7 @@ impl ChargingCurrent {
 impl std::fmt::Display for ChargingCurrent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0 == 0 {
-            write!(f, "0A (Deaktiviert / Ladefreigabe entzogen)")
+            write!(f, "0A (Disabled / Charge permission revoked)")
         } else {
             write!(f, "{}A", self.0)
         }
@@ -341,10 +341,10 @@ impl std::fmt::Display for ChargingCurrent {
 }
 
 // -----------------------------------------------------------------------------
-// Register 258 (0x0102): Aktuelle Ladeleistung / Stromstärke (Read Holding, 1 word)
+// Register 258 (0x0102): Active charging power or current (Read Holding, 1 word)
 // -----------------------------------------------------------------------------
 
-/// Modbus holding register 258: Aktuelle Ladeleistung bzw. Stromstärke
+/// Modbus holding register 258: Active charging power or current
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PowerOrCurrent(pub u16);
@@ -370,7 +370,7 @@ impl PowerOrCurrent {
 
 impl std::fmt::Display for PowerOrCurrent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Wert: {}", self.0)
+        write!(f, "Value: {}", self.0)
     }
 }
 
@@ -384,59 +384,59 @@ impl std::fmt::Display for PowerOrCurrent {
 pub enum EvccCommand {
     /// 00: Reset (Parameter: 1111)
     Reset,
-    /// 01: Abfrage Firmware (Antwort: Vx.y)
+    /// 01: Get firmware revision (Reply: Vx.y)
     GetFirmware,
-    /// 02: Abfrage Zustand (0000=A, 0004=B2, 0005=C, 0006=D, 0009=B', 0013=B1, 0017=A', 0033=Fehler CS, etc.)
+    /// 02: Get state (0000=A, 0004=B2, 0005=C, 0006=D, 0009=B', 0013=B1, 0017=A', 0033=CS error, etc.)
     GetStatus,
-    /// 03: Wechsel zu MANUAL
+    /// 03: Switch to MANUAL mode
     SwitchToManual,
-    /// 04: Zustand Ausgänge
+    /// 04: Get output status (sum of active outputs)
     GetOutputStatus,
-    /// 05: Ausgang einschalten (Parameter: xxxx)
+    /// 05: Set output (Parameter: xxxx)
     SetOutput,
-    /// 06: Ausgang ausschalten (Parameter: xxxx)
+    /// 06: Clear output (Parameter: xxxx)
     ClearOutput,
-    /// 07: Abfrage ADC-Wert pos. U_CP
+    /// 07: Get ADC value positive U_CP
     GetAdcPosUcp,
-    /// 08: Abfrage ADC-Wert neg. U_CP
+    /// 08: Get ADC value negative U_CP
     GetAdcNegUcp,
-    /// 09: Abfrage ADC-Wert U_CS
+    /// 09: Get ADC value U_CS
     GetAdcUcs,
-    /// 10: Abfrage Eingänge (E1, E2)
+    /// 10: Get digital input status (E1, E2)
     GetInputs,
-    /// 11: Abfrage aktuelle PWM (in 0.1%-Schritten)
+    /// 11: Get present PWM duty cycle (in 0.1% steps)
     GetPresentPwm,
-    /// 12: PWM setzen (Ladestrom)
+    /// 12: Set PWM duty cycle / charging current
     SetPwm,
-    /// 13: PWM einschalten
+    /// 13: Enable PWM
     EnablePwm,
-    /// 14: PWM ausschalten
+    /// 14: Disable PWM
     DisablePwm,
-    /// 15: Default-PWM setzen
+    /// 15: Set default PWM duty cycle
     SetDefaultPwm,
-    /// 16: Merker "Belüftung" setzen (1110 = angeschlossen, 1111 = keine Belüftung)
+    /// 16: Set ventilation marker (1110 = connected, 1111 = no ventilation)
     SetVentilationMarker,
-    /// 17: Abfrage Merker "Belüftung"
+    /// 17: Get ventilation marker
     GetVentilationMarker,
-    /// 22: Moduladresse setzen (111x)
+    /// 22: Set module address (111x)
     SetModuleAddress,
-    /// 23: Abfrage Moduladresse (0..8)
+    /// 23: Get module address (0..8)
     GetModuleAddress,
-    /// 24: Werkseinstellung laden und Reset (1111)
+    /// 24: Load factory settings and reset (1111)
     LoadFactorySettingsAndReset,
-    /// 25: Laden beenden oder MANUAL verlassen
+    /// 25: Stop charging or leave MANUAL mode
     StopChargingOrLeaveManual,
-    /// 26: Abfrage Default-PWM
+    /// 26: Get default PWM duty cycle
     GetDefaultPwm,
-    /// 27: bBreakCharge setzen
+    /// 27: Set bBreakCharge
     SetBreakCharge,
-    /// 28: bBreakCharge löschen
+    /// 28: Clear bBreakCharge
     ClearBreakCharge,
-    /// 29: Abfrage bBreakCharge
+    /// 29: Get bBreakCharge
     GetBreakCharge,
-    /// 30: Sprung zu Zustand A'
+    /// 30: Switch to state A'
     SwitchToAPrime,
-    /// 31: Verlassen A' (Sprung nach Zustand A)
+    /// 31: Leave state A' (Switch to state A)
     LeaveAPrime,
     /// Other command code
     Other(u8),
