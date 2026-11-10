@@ -57,9 +57,9 @@ impl Default for ParityAndStopBit {
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum Connection {
-    /// Connect via local or virtual serial device (Modbus ASCII over RS485 / PTY)
-    Ascii {
-        /// Serial device path (e.g. /dev/ttyElfin, /dev/ttyUSB0, COM1)
+    /// Connect via local or virtual serial device (Modbus ASCII over RS485)
+    Serial {
+        /// Serial device path (e.g. /dev/ttyUSB0, COM1)
         #[arg(short, long, default_value_t = default_device_name())]
         device: String,
 

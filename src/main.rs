@@ -178,7 +178,7 @@ fn main() -> Result<()> {
     let _log_handle = logging_init(args.verbose.log_level_filter());
 
     match &args.connection {
-        commandline::Connection::Ascii {
+        commandline::Connection::Serial {
             device,
             baud_rate,
             address,

@@ -5,7 +5,7 @@ This repository contains a Rust library and command-line tool for interacting wi
 ## Table of Contents
 - [Overview](#overview)
 - [Modbus ASCII Protocol & Registers](#modbus-ascii-protocol--registers)
-- [Connection Methods (`ascii` vs `tcp`)](#connection-methods-ascii-vs-tcp)
+- [Connection Methods (`serial` vs `tcp`)](#connection-methods-serial-vs-tcp)
 - [Command-Line Usage](#command-line-usage)
 - [Daemon Mode & MQTT](#daemon-mode--mqtt)
 - [Technical Documentation](#technical-documentation)
@@ -19,7 +19,7 @@ Requests start with `:` (`0x3A`), responses start with `>` (`0x3E`), and frames 
 
 This tool provides two direct connection modes:
 - **`tcp`**: Connects directly via TCP to transparent serial servers (such as **Elfin EW11**, USR-TCP232, Protoss-PE11, etc.) without requiring `socat`.
-- **`ascii`**: Connects via local serial devices or virtual serial ports (e.g. `/dev/ttyUSB0`, `/dev/ttyElfin`, or Windows COM ports) with configurable baud rate, parity, stop bits, and address.
+- **`serial`**: Connects via local serial devices or virtual serial ports (e.g. `/dev/ttyUSB0` or Windows COM ports) with configurable baud rate, parity, stop bits, and address.
 
 ---
 
@@ -37,7 +37,7 @@ The tool implements the official ABL EVCC2/3 specification:
 
 ---
 
-## Connection Methods (`ascii` vs `tcp`)
+## Connection Methods (`serial` vs `tcp`)
 
 ### 1. `tcp` Mode (Direct Network Connection via Serial Server, e.g. Elfin EW11)
 Connect directly without needing `socat`:
@@ -47,10 +47,10 @@ abl-evcc tcp 192.168.3.128:8899 read-status
 Options:
 - `-s, --slave <SLAVE>`: Modbus slave ID (default: `1`)
 
-### 2. `ascii` Mode (Local Serial Port or Virtual PTY)
-Connect over RS485 USB converter or existing virtual PTY (e.g. `/dev/ttyElfin`):
+### 2. `serial` Mode (Local Serial Port)
+Connect over RS485 USB converter (default: `/dev/ttyUSB0`):
 ```bash
-abl-evcc ascii --device /dev/ttyElfin read-status
+abl-evcc serial --device /dev/ttyUSB0 read-status
 ```
 Configurable options:
 - `-d, --device <DEVICE>`: Serial device path (default: `/dev/ttyUSB0`)
@@ -62,7 +62,7 @@ Configurable options:
 
 ## Command-Line Usage
 
-Both `tcp` and `ascii` support identical subcommands:
+Both `tcp` and `serial` support identical subcommands:
 
 ### Read Wallbox Charging Status
 ```bash
@@ -70,7 +70,7 @@ Both `tcp` and `ascii` support identical subcommands:
 abl-evcc tcp 192.168.3.128:8899 read-status
 
 # Via serial port:
-abl-evcc ascii --device /dev/ttyElfin read-status
+abl-evcc serial --device /dev/ttyUSB0 read-status
 ```
 Example JSON output:
 ```json
@@ -124,12 +124,12 @@ abl-evcc tcp 192.168.3.128:8899 wake-up
 
 ## Daemon Mode & MQTT
 
-Both `tcp` and `ascii` modes support continuous polling:
+Both `tcp` and `serial` modes support continuous polling:
 
 - **Log to Console:**
   ```bash
   abl-evcc tcp 192.168.3.128:8899 daemon console
-  abl-evcc ascii --device /dev/ttyElfin daemon console
+  abl-evcc serial --device /dev/ttyUSB0 daemon console
   ```
 
 - **Publish to MQTT Broker:**
