@@ -19,6 +19,18 @@ pub enum AsyncAsciiTransport {
     Serial(SerialStream),
 }
 
+impl From<TcpStream> for AsyncAsciiTransport {
+    fn from(t: TcpStream) -> Self {
+        Self::Tcp(t)
+    }
+}
+
+impl From<SerialStream> for AsyncAsciiTransport {
+    fn from(s: SerialStream) -> Self {
+        Self::Serial(s)
+    }
+}
+
 impl AsyncRead for AsyncAsciiTransport {
     fn poll_read(
         self: Pin<&mut Self>,

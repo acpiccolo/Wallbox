@@ -12,6 +12,22 @@ mod async_safe_client_tests {
     };
 
     #[tokio::test]
+    async fn test_from_tcp_stream_async_ascii_transport() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _server = thread::spawn(move || {
+            let _ = listener.accept();
+        });
+
+        let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await.unwrap();
+        let transport: abl_evcc_lib::tokio_async::AsyncAsciiTransport = stream.into();
+        match transport {
+            abl_evcc_lib::tokio_async::AsyncAsciiTransport::Tcp(_) => (),
+            _ => panic!("Expected Tcp variant"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_async_safe_client_tcp() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();

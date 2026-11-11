@@ -19,6 +19,18 @@ pub enum AsciiTransport {
     Tcp(TcpStream),
 }
 
+impl From<Box<dyn tokio_serial::SerialPort>> for AsciiTransport {
+    fn from(s: Box<dyn tokio_serial::SerialPort>) -> Self {
+        Self::Serial(s)
+    }
+}
+
+impl From<TcpStream> for AsciiTransport {
+    fn from(t: TcpStream) -> Self {
+        Self::Tcp(t)
+    }
+}
+
 impl std::io::Read for AsciiTransport {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
