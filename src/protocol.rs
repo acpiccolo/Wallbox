@@ -102,16 +102,20 @@ pub fn decode_ascii_frame(frame: &str) -> Result<(u8, u8, Vec<u8>), Error> {
 // ABL EVCC2/3 (eMH1 / eMH2) Modbus ASCII Protocol (docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf)
 // =============================================================================
 
-/// Modbus address of the ABL eMH1 wallbox (range from 1 to 247, or 0 for broadcast).
-/// Modeled after SDM72-Powermeter protocol Address type.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// Modbus address of the ABL eMH1 wallbox.
+/// According to the official ABL EVCC2/3 specification, valid Device-IDs are 0x01..0x10 (1..=16),
+/// with 0x00 reserved as Broadcast address. The standard Modbus protocol extends addresses up to 247.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Address(u8);
 
 impl Address {
     pub const BROADCAST: u8 = 0;
     pub const MIN: u8 = 1;
-    pub const MAX: u8 = 247;
+    /// Maximum device ID defined in official ABL documentation (0x10 = 16)
+    pub const MAX: u8 = 16;
+    /// Maximum standard Modbus slave address (247)
+    pub const MAX_MODBUS: u8 = 247;
 
     pub const fn new(addr: u8) -> Self {
         Self(addr)
@@ -119,6 +123,12 @@ impl Address {
 
     pub const fn value(&self) -> u8 {
         self.0
+    }
+}
+
+impl Default for Address {
+    fn default() -> Self {
+        Self(1)
     }
 }
 
@@ -133,7 +143,7 @@ impl TryFrom<u8> for Address {
     type Error = Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        if value == Self::BROADCAST || (Self::MIN..=Self::MAX).contains(&value) {
+        if value == Self::BROADCAST || (Self::MIN..=Self::MAX_MODBUS).contains(&value) {
             Ok(Self(value))
         } else {
             Err(Error::AddressOutOfRange(value))
@@ -161,6 +171,8 @@ pub enum BaudRate {
 }
 
 impl BaudRate {
+    pub const ALL: [Self; 4] = [Self::B38400, Self::B19200, Self::B9600, Self::B57600];
+
     pub fn as_u32(&self) -> u32 {
         match self {
             Self::B9600 => 9600,
@@ -208,15 +220,24 @@ impl std::fmt::Display for BaudRate {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ParityAndStopBit {
-    /// No parity, one stop bit (8N1)
-    NoParityOneStopBit,
     #[default]
     /// Even parity, one stop bit (8E1, default for ABL eMH1)
     EvenParityOneStopBit,
+    /// No parity, one stop bit (8N1)
+    NoParityOneStopBit,
     /// Odd parity, one stop bit (8O1)
     OddParityOneStopBit,
     /// No parity, two stop bits (8N2)
     NoParityTwoStopBits,
+}
+
+impl ParityAndStopBit {
+    pub const ALL: [Self; 4] = [
+        Self::EvenParityOneStopBit,
+        Self::NoParityOneStopBit,
+        Self::OddParityOneStopBit,
+        Self::NoParityTwoStopBits,
+    ];
 }
 
 impl std::fmt::Display for ParityAndStopBit {

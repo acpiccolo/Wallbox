@@ -342,6 +342,25 @@ fn scan_device_address(client: &mut AsciiClient, slave_id: u8) -> Result<()> {
     Ok(())
 }
 
+fn parity_and_stop_bits_to_serial(
+    p_and_s: proto::ParityAndStopBit,
+) -> (tokio_serial::Parity, tokio_serial::StopBits) {
+    match p_and_s {
+        proto::ParityAndStopBit::EvenParityOneStopBit => {
+            (tokio_serial::Parity::Even, tokio_serial::StopBits::One)
+        }
+        proto::ParityAndStopBit::NoParityOneStopBit => {
+            (tokio_serial::Parity::None, tokio_serial::StopBits::One)
+        }
+        proto::ParityAndStopBit::OddParityOneStopBit => {
+            (tokio_serial::Parity::Odd, tokio_serial::StopBits::One)
+        }
+        proto::ParityAndStopBit::NoParityTwoStopBits => {
+            (tokio_serial::Parity::None, tokio_serial::StopBits::Two)
+        }
+    }
+}
+
 fn handle_serial_scan(
     device: &str,
     max_address: u8,
@@ -356,86 +375,53 @@ fn handle_serial_scan(
 
     println!("Starting serial bus scan on {device} (max address: {max_address})...");
 
-    let candidate_configs = [
-        (
-            38400,
-            tokio_serial::Parity::Even,
-            tokio_serial::StopBits::One,
-            "38400 8E1",
-        ),
-        (
-            19200,
-            tokio_serial::Parity::Even,
-            tokio_serial::StopBits::One,
-            "19200 8E1",
-        ),
-        (
-            9600,
-            tokio_serial::Parity::Even,
-            tokio_serial::StopBits::One,
-            "9600 8E1",
-        ),
-        (
-            38400,
-            tokio_serial::Parity::None,
-            tokio_serial::StopBits::One,
-            "38400 8N1",
-        ),
-        (
-            19200,
-            tokio_serial::Parity::None,
-            tokio_serial::StopBits::One,
-            "19200 8N1",
-        ),
-        (
-            9600,
-            tokio_serial::Parity::None,
-            tokio_serial::StopBits::One,
-            "9600 8N1",
-        ),
-    ];
+    let default_baud = proto::BaudRate::default();
+    let default_parity = proto::ParityAndStopBit::default();
+    let (default_p, default_s) = parity_and_stop_bits_to_serial(default_parity);
 
-    // Priority 1: Check default (38400 8E1, Slave ID 1)
-    print!("Checking default: 38400 8E1, Slave ID 1 ... ");
+    // Step 1: Test default connection first (38400 8E1, Slave ID 1, then Broadcast 0, then 2..=max_address)
+    print!("Checking default connection: {default_baud} Bd, {default_parity}, Slave ID 1 ... ");
     std::io::stdout()
         .flush()
         .context("Failed to flush stdout")?;
+
+    let default_delay = check_serial_delay(delay, default_baud.as_u32());
     if let Ok(mut client) = AsciiClient::connect_serial(
         device,
-        38400,
-        tokio_serial::Parity::Even,
-        tokio_serial::StopBits::One,
+        default_baud.as_u32(),
+        default_p,
+        default_s,
         1,
         timeout,
-        delay,
+        default_delay,
     ) {
         if scan_device_address(&mut client, 1).is_ok() {
-            println!("  Communication established at 38400 baud, 8E1");
+            println!("  Communication established at default settings: {default_baud} Bd, {default_parity}");
             return Ok(());
         }
         println!("no response.");
 
-        // Priority 2: Check broadcast address 0 on default 38400 8E1
-        print!("Checking broadcast address 0 at 38400 8E1 ... ");
+        // Check broadcast address 0 on default connection
+        print!("Checking broadcast address 0 at {default_baud} Bd, {default_parity} ... ");
         std::io::stdout()
             .flush()
             .context("Failed to flush stdout")?;
-        std::thread::sleep(delay);
+        std::thread::sleep(default_delay);
         if scan_device_address(&mut client, 0).is_ok() {
-            println!("  Communication established at 38400 baud, 8E1 (via broadcast address 0)");
+            println!("  Communication established at {default_baud} Bd, {default_parity} (via broadcast address 0)");
             return Ok(());
         }
         println!("no response.");
 
-        // Priority 3: Check addresses 2..=max_address on default 38400 8E1
+        // Check addresses 2..=max_address on default connection
         for addr in 2..=max_address {
-            print!("Checking 38400 8E1, Slave ID {addr} ... ");
+            print!("Checking {default_baud} Bd, {default_parity}, Slave ID {addr} ... ");
             std::io::stdout()
                 .flush()
                 .context("Failed to flush stdout")?;
-            std::thread::sleep(delay);
+            std::thread::sleep(default_delay);
             if scan_device_address(&mut client, addr).is_ok() {
-                println!("  Communication established at 38400 baud, 8E1");
+                println!("  Communication established at default settings: {default_baud} Bd, {default_parity}");
                 return Ok(());
             }
             println!("no response.");
@@ -444,46 +430,61 @@ fn handle_serial_scan(
         println!("failed to open serial port.");
     }
 
-    // Priority 4: Try remaining baud rate / parity combinations across addresses
-    for &(baud, parity, stop_bits, desc) in &candidate_configs[1..] {
-        let scan_delay = check_serial_delay(delay, baud);
-        println!("Testing configuration: {desc} ...");
-        let mut client = match AsciiClient::connect_serial(
-            device, baud, parity, stop_bits, 1, timeout, scan_delay,
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                debug!("Failed to configure serial port for {desc}: {e}");
+    // Step 2: Loop through all other BaudRate and ParityAndStopBit combinations (skipping the default one)
+    for baud in proto::BaudRate::ALL {
+        for parity in proto::ParityAndStopBit::ALL {
+            // Skip the default configuration since it was already comprehensively tested in Step 1
+            if baud == default_baud && parity == default_parity {
                 continue;
             }
-        };
 
-        // Check ID 1, then Broadcast 0
-        for &addr in &[1, 0] {
-            print!("  Checking {desc}, Slave ID {addr} ... ");
-            std::io::stdout()
-                .flush()
-                .context("Failed to flush stdout")?;
-            std::thread::sleep(scan_delay);
-            if scan_device_address(&mut client, addr).is_ok() {
-                println!("  Communication established at {desc}");
-                return Ok(());
-            }
-            println!("no response.");
-        }
+            let (p, s) = parity_and_stop_bits_to_serial(parity);
+            let scan_delay = check_serial_delay(delay, baud.as_u32());
+            println!("Testing configuration: {baud} Bd, {parity} ...");
 
-        // Check addresses 2..=max_address
-        for addr in 2..=max_address {
-            print!("  Checking {desc}, Slave ID {addr} ... ");
-            std::io::stdout()
-                .flush()
-                .context("Failed to flush stdout")?;
-            std::thread::sleep(scan_delay);
-            if scan_device_address(&mut client, addr).is_ok() {
-                println!("  Communication established at {desc}");
-                return Ok(());
+            let mut client = match AsciiClient::connect_serial(
+                device,
+                baud.as_u32(),
+                p,
+                s,
+                1,
+                timeout,
+                scan_delay,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    debug!("Failed to configure serial port for {baud} Bd {parity}: {e}");
+                    continue;
+                }
+            };
+
+            // Check ID 1, then Broadcast 0
+            for &addr in &[1, 0] {
+                print!("  Checking {baud} Bd, {parity}, Slave ID {addr} ... ");
+                std::io::stdout()
+                    .flush()
+                    .context("Failed to flush stdout")?;
+                std::thread::sleep(scan_delay);
+                if scan_device_address(&mut client, addr).is_ok() {
+                    println!("  Communication established at {baud} Bd, {parity}");
+                    return Ok(());
+                }
+                println!("no response.");
             }
-            println!("no response.");
+
+            // Check addresses 2..=max_address
+            for addr in 2..=max_address {
+                print!("  Checking {baud} Bd, {parity}, Slave ID {addr} ... ");
+                std::io::stdout()
+                    .flush()
+                    .context("Failed to flush stdout")?;
+                std::thread::sleep(scan_delay);
+                if scan_device_address(&mut client, addr).is_ok() {
+                    println!("  Communication established at {baud} Bd, {parity}");
+                    return Ok(());
+                }
+                println!("no response.");
+            }
         }
     }
 
