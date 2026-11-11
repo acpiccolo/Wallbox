@@ -117,10 +117,6 @@ impl Address {
     /// Maximum standard Modbus slave address (247)
     pub const MAX_MODBUS: u8 = 247;
 
-    pub const fn new(addr: u8) -> Self {
-        Self(addr)
-    }
-
     pub const fn value(&self) -> u8 {
         self.0
     }

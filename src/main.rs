@@ -332,6 +332,7 @@ fn scan_device_address(client: &mut AsciiClient, slave_id: u8) -> Result<()> {
     client.set_slave_id(slave_id);
     let firmware = client.read_firmware()?;
     let status = client.read_status().ok();
+    let modbus_settings = client.read_modbus_settings().ok();
     println!("SUCCESS!");
     println!("  Device found with Modbus Slave ID: {slave_id}");
     if let Some(st) = status {
@@ -339,6 +340,9 @@ fn scan_device_address(client: &mut AsciiClient, slave_id: u8) -> Result<()> {
     }
     println!("  Firmware Revision: {}", firmware.firmware_revision());
     println!("  PCBA Version: {}", firmware.pcba_version);
+    if let Some(settings) = modbus_settings {
+        println!("  Modbus Settings: {settings}");
+    }
     Ok(())
 }
 

@@ -44,31 +44,15 @@ pub enum ParityAndStopBit {
     #[value(
         name = "8e1",
         alias = "8E1",
-        alias = "ep1b",
         help = "even parity, one stop bit (default for ABL eMH1 8E1)"
     )]
     #[default]
     EvenParityOneStopBit,
-    #[value(
-        name = "8n1",
-        alias = "8N1",
-        alias = "np1b",
-        help = "no parity, one stop bit (8N1)"
-    )]
+    #[value(name = "8n1", alias = "8N1", help = "no parity, one stop bit (8N1)")]
     NoParityOneStopBit,
-    #[value(
-        name = "8o1",
-        alias = "8O1",
-        alias = "op1b",
-        help = "odd parity, one stop bit (8O1)"
-    )]
+    #[value(name = "8o1", alias = "8O1", help = "odd parity, one stop bit (8O1)")]
     OddParityOneStopBit,
-    #[value(
-        name = "8n2",
-        alias = "8N2",
-        alias = "np2b",
-        help = "no parity, two stop bits (8N2)"
-    )]
+    #[value(name = "8n2", alias = "8N2", help = "no parity, two stop bits (8N2)")]
     NoParityTwoStopBits,
 }
 
