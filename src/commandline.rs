@@ -42,16 +42,33 @@ fn default_device_name() -> String {
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ParityAndStopBit {
     #[value(
-        name = "ep1b",
+        name = "8e1",
+        alias = "8E1",
+        alias = "ep1b",
         help = "even parity, one stop bit (default for ABL eMH1 8E1)"
     )]
     #[default]
     EvenParityOneStopBit,
-    #[value(name = "np1b", help = "no parity, one stop bit")]
+    #[value(
+        name = "8n1",
+        alias = "8N1",
+        alias = "np1b",
+        help = "no parity, one stop bit (8N1)"
+    )]
     NoParityOneStopBit,
-    #[value(name = "op1b", help = "odd parity, one stop bit")]
+    #[value(
+        name = "8o1",
+        alias = "8O1",
+        alias = "op1b",
+        help = "odd parity, one stop bit (8O1)"
+    )]
     OddParityOneStopBit,
-    #[value(name = "np2b", help = "no parity, two stop bits")]
+    #[value(
+        name = "8n2",
+        alias = "8N2",
+        alias = "np2b",
+        help = "no parity, two stop bits (8N2)"
+    )]
     NoParityTwoStopBits,
 }
 
@@ -71,8 +88,8 @@ pub enum Connection {
         #[arg(long, default_value = "1", value_parser = parse_address)]
         address: u8,
 
-        /// Parity and stop bits (default: ep1b for 8E1)
-        #[arg(long, default_value = "ep1b")]
+        /// Parity and stop bits (default: 8e1)
+        #[arg(long, default_value = "8e1")]
         parity_and_stop_bit: ParityAndStopBit,
 
         #[command(subcommand)]

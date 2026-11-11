@@ -134,7 +134,7 @@ abl-evcc serial --device /dev/ttyUSB0 read-status
 Configurable options:
 - `-d, --device <DEVICE>`: Serial device path (default: `/dev/ttyUSB0`)
 - `--baud-rate <BAUD>`: Baud rate (default: `38400`)
-- `--parity-and-stop-bit <PARITY>`: Parity and stop bits (`ep1b` for 8E1 [default], `np1b` for 8N1, `op1b` for 8O1, `np2b` for 8N2)
+- `--parity-and-stop-bit <PARITY>`: Parity and stop bits (`8e1` [default], `8n1`, `8o1`, `8n2`)
 - `--address <ADDRESS>`: Modbus slave address 1..16 (default: `1`)
 
 ---
