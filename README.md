@@ -235,7 +235,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Quick Start: Asynchronous Safe Client
+### Quick Start: Asynchronous Safe Client (TCP and Serial)
 
 ```rust
 use abl_evcc_lib::tokio_async_safe_client::SafeClient;
@@ -243,10 +243,15 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = SafeClient::connect("192.168.3.128:8899", 1, Duration::from_millis(100)).await?;
+    // Via direct TCP:
+    let mut tcp_client = SafeClient::connect_tcp("192.168.3.128:8899", 1, Duration::from_millis(100)).await?;
+    let measurements = tcp_client.read_measurements().await?;
+    println!("Async TCP read status: {:?}", measurements.status);
 
-    let measurements = client.read_measurements().await?;
-    println!("Async read status: {:?}", measurements.status);
+    // Or via asynchronous serial port (/dev/ttyUSB0):
+    // let mut serial_client = SafeClient::connect_serial(
+    //     "/dev/ttyUSB0", 38400, tokio_serial::Parity::Even, tokio_serial::StopBits::One, 1, Duration::from_millis(100),
+    // )?;
 
     Ok(())
 }
