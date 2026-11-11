@@ -12,19 +12,22 @@ mod ascii_client_mock_tests {
     };
 
     #[test]
-    fn test_from_tcp_stream_ascii_transport() {
+    fn test_ascii_client_debug() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let _server = thread::spawn(move || {
             let _ = listener.accept();
         });
 
-        let stream = std::net::TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
-        let transport: abl_evcc_lib::tokio_sync::AsciiTransport = stream.into();
-        match transport {
-            abl_evcc_lib::tokio_sync::AsciiTransport::Tcp(_) => (),
-            _ => panic!("Expected Tcp variant"),
-        }
+        let client = AsciiClient::connect_tcp(
+            &format!("127.0.0.1:{}", port),
+            1,
+            Duration::from_secs(1),
+            Duration::from_millis(10),
+        ).unwrap();
+
+        let debug_str = format!("{:?}", client);
+        assert!(debug_str.contains("AsciiClient"));
     }
 
     #[test]

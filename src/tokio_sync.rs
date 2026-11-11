@@ -14,20 +14,17 @@ use std::{
     time::Duration,
 };
 
-pub enum AsciiTransport {
+enum AsciiTransport {
     Serial(Box<dyn tokio_serial::SerialPort>),
     Tcp(TcpStream),
 }
 
-impl From<Box<dyn tokio_serial::SerialPort>> for AsciiTransport {
-    fn from(s: Box<dyn tokio_serial::SerialPort>) -> Self {
-        Self::Serial(s)
-    }
-}
-
-impl From<TcpStream> for AsciiTransport {
-    fn from(t: TcpStream) -> Self {
-        Self::Tcp(t)
+impl std::fmt::Debug for AsciiTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serial(_) => write!(f, "AsciiTransport::Serial"),
+            Self::Tcp(t) => f.debug_tuple("AsciiTransport::Tcp").field(t).finish(),
+        }
     }
 }
 
@@ -57,6 +54,7 @@ impl std::io::Write for AsciiTransport {
 }
 
 /// A synchronous client for communicating with ABL EVCC controllers via Modbus ASCII.
+#[derive(Debug)]
 pub struct AsciiClient {
     reader: BufReader<AsciiTransport>,
     slave_id: u8,

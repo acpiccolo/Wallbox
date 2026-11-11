@@ -14,21 +14,10 @@ use tokio::net::TcpStream;
 use tokio_serial::SerialStream;
 
 /// Asynchronous transport supporting either a network TCP stream or an asynchronous serial port.
-pub enum AsyncAsciiTransport {
+#[derive(Debug)]
+enum AsyncAsciiTransport {
     Tcp(TcpStream),
     Serial(SerialStream),
-}
-
-impl From<TcpStream> for AsyncAsciiTransport {
-    fn from(t: TcpStream) -> Self {
-        Self::Tcp(t)
-    }
-}
-
-impl From<SerialStream> for AsyncAsciiTransport {
-    fn from(s: SerialStream) -> Self {
-        Self::Serial(s)
-    }
 }
 
 impl AsyncRead for AsyncAsciiTransport {
@@ -72,6 +61,7 @@ impl AsyncWrite for AsyncAsciiTransport {
 }
 
 /// An asynchronous Modbus ASCII client for ABL EVCC2/3 controllers.
+#[derive(Debug)]
 pub struct AsyncAsciiClient {
     reader: BufReader<AsyncAsciiTransport>,
     slave_id: u8,
