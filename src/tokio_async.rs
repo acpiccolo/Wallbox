@@ -168,20 +168,8 @@ impl AsyncAsciiClient {
         self.timeout = timeout;
     }
 
-    /// Returns the remote peer address if connected via TCP.
-    pub fn peer_addr(&self) -> Option<SocketAddr> {
-        match self.reader.get_ref() {
-            AsyncAsciiTransport::Tcp(t) => t.peer_addr().ok(),
-            AsyncAsciiTransport::Serial(_) => None,
-        }
-    }
-
     /// Send a raw Modbus ASCII request and receive the verified response payload asynchronously.
-    pub async fn transaction(
-        &mut self,
-        function_code: u8,
-        request_payload: &[u8],
-    ) -> Result<Vec<u8>> {
+    async fn transaction(&mut self, function_code: u8, request_payload: &[u8]) -> Result<Vec<u8>> {
         let frame = encode_ascii_frame(self.slave_id, function_code, request_payload, ':');
         let transport = self.reader.get_mut();
         tokio::time::timeout(self.timeout, transport.write_all(frame.as_bytes()))
@@ -220,7 +208,7 @@ impl AsyncAsciiClient {
     }
 
     /// Read holding registers asynchronously with retry.
-    pub async fn read_holding_registers(&mut self, start_reg: u16, qty: u16) -> Result<Vec<u8>> {
+    async fn read_holding_registers(&mut self, start_reg: u16, qty: u16) -> Result<Vec<u8>> {
         let mut req = Vec::with_capacity(4);
         req.extend_from_slice(&start_reg.to_be_bytes());
         req.extend_from_slice(&qty.to_be_bytes());
@@ -254,7 +242,7 @@ impl AsyncAsciiClient {
     }
 
     /// Write multiple registers asynchronously with retry.
-    pub async fn write_multiple_registers(&mut self, start_reg: u16, words: &[u16]) -> Result<()> {
+    async fn write_multiple_registers(&mut self, start_reg: u16, words: &[u16]) -> Result<()> {
         let mut req = Vec::with_capacity(5 + words.len() * 2);
         req.extend_from_slice(&start_reg.to_be_bytes());
         req.extend_from_slice(&(words.len() as u16).to_be_bytes());

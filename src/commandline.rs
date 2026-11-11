@@ -13,10 +13,10 @@ pub fn parse_address(s: &str) -> Result<u8, String> {
     } else {
         s.parse::<u8>().map_err(|e| format!("{e}"))?
     };
-    if (1..=16).contains(&val) {
+    if val == 0 || (1..=247).contains(&val) {
         Ok(val)
     } else {
-        Err(format!("Address must be in range 1..=16, got {val}"))
+        Err(format!("Address must be in range 0..=247, got {val}"))
     }
 }
 
@@ -67,7 +67,7 @@ pub enum Connection {
         #[arg(long, default_value = "38400")]
         baud_rate: u32,
 
-        /// Modbus slave address from 1 to 16
+        /// Modbus slave address (1 to 247, or 0 for broadcast)
         #[arg(long, default_value = "1", value_parser = parse_address)]
         address: u8,
 
@@ -83,7 +83,7 @@ pub enum Connection {
         /// TCP server address (e.g. 192.168.3.128:8899)
         address: String,
 
-        /// Modbus slave address from 1 to 16
+        /// Modbus slave address (1 to 247, or 0 for broadcast)
         #[arg(short, long, default_value = "1", value_parser = parse_address)]
         slave: u8,
 

@@ -409,7 +409,7 @@ impl MqttPublisher {
         pub_msg!("power", meas.total_power_watts);
 
         if let Some(fw) = firmware {
-            pub_msg!("firmware_revision", fw.firmware_revision);
+            pub_msg!("firmware_revision", fw.firmware_revision());
             pub_msg!("pcba_version", fw.pcba_version);
         }
 

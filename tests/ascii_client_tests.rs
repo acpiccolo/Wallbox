@@ -55,7 +55,6 @@ mod ascii_client_mock_tests {
         assert_eq!(client.delay(), Duration::from_millis(20));
         // Automatically detected from stream
         assert_eq!(client.timeout(), Duration::from_millis(500));
-        assert!(client.peer_addr().is_some());
 
         // Test setters
         client.set_slave_id(2);
@@ -153,6 +152,6 @@ mod ascii_client_mock_tests {
         // Switch to slave ID 2 and query
         client.set_slave_id(2);
         let fw = client.read_firmware().unwrap();
-        assert_eq!(fw.firmware_revision, "1.1");
+        assert_eq!(fw.firmware_revision(), "1.1");
     }
 }

@@ -20,6 +20,14 @@ pub enum Error {
         exception_code: u8,
     },
 
+    /// The provided Modbus address is outside permissible range (1..=247, or 0 for broadcast).
+    #[error("The address value {0} is outside the permissible range (0, 1..=247)")]
+    AddressOutOfRange(u8),
+
+    /// The provided baud rate is not supported.
+    #[error("Baud rate must be any value of 9600, 19200, 38400, 57600.")]
+    InvalidBaudRate,
+
     /// The provided Device ID is outside permissible range (1..=16).
     #[error("Device ID {0} is out of permissible range (1..=16)")]
     DeviceIdOutOfRange(u8),

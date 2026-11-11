@@ -55,7 +55,6 @@ mod async_client_tests {
         assert_eq!(client.slave_id(), 1);
         assert_eq!(client.delay(), Duration::from_millis(20));
         assert_eq!(client.timeout(), Duration::from_millis(500));
-        assert!(client.peer_addr().is_some());
 
         // Test setters
         client.set_slave_id(2);

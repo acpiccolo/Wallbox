@@ -337,7 +337,7 @@ fn scan_device_address(client: &mut AsciiClient, slave_id: u8) -> Result<()> {
     if let Some(st) = status {
         println!("  Vehicle / Charger Status: {st:?} ({})", st.as_char());
     }
-    println!("  Firmware Revision: {}", firmware.firmware_revision);
+    println!("  Firmware Revision: {}", firmware.firmware_revision());
     println!("  PCBA Version: {}", firmware.pcba_version);
     Ok(())
 }

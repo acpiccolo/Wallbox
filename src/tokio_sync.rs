@@ -218,32 +218,8 @@ impl AsciiClient {
         Ok(())
     }
 
-    /// Returns the remote peer address if connected via TCP.
-    pub fn peer_addr(&self) -> Option<SocketAddr> {
-        match self.reader.get_ref() {
-            AsciiTransport::Tcp(t) => t.peer_addr().ok(),
-            AsciiTransport::Serial(_) => None,
-        }
-    }
-
-    /// Returns the serial port name if connected via serial port.
-    pub fn port_name(&self) -> Option<String> {
-        match self.reader.get_ref() {
-            AsciiTransport::Serial(s) => s.name(),
-            AsciiTransport::Tcp(_) => None,
-        }
-    }
-
-    /// Returns the baud rate if connected via serial port.
-    pub fn baud_rate(&self) -> Option<u32> {
-        match self.reader.get_ref() {
-            AsciiTransport::Serial(s) => s.baud_rate().ok(),
-            AsciiTransport::Tcp(_) => None,
-        }
-    }
-
     /// Send a raw Modbus ASCII request and receive the verified response payload.
-    pub fn transaction(&mut self, function_code: u8, request_payload: &[u8]) -> Result<Vec<u8>> {
+    fn transaction(&mut self, function_code: u8, request_payload: &[u8]) -> Result<Vec<u8>> {
         let frame = encode_ascii_frame(self.slave_id, function_code, request_payload, ':');
         trace!("Modbus ASCII send: {:?}", frame.trim());
 
@@ -282,7 +258,7 @@ impl AsciiClient {
     }
 
     /// Read holding registers (Function Code 0x03) with retry.
-    pub fn read_holding_registers(&mut self, start_reg: u16, qty: u16) -> Result<Vec<u8>> {
+    fn read_holding_registers(&mut self, start_reg: u16, qty: u16) -> Result<Vec<u8>> {
         let mut req = Vec::with_capacity(4);
         req.extend_from_slice(&start_reg.to_be_bytes());
         req.extend_from_slice(&qty.to_be_bytes());
@@ -317,7 +293,7 @@ impl AsciiClient {
     }
 
     /// Write multiple holding registers (Function Code 0x10) with retry.
-    pub fn write_multiple_registers(&mut self, start_reg: u16, words: &[u16]) -> Result<()> {
+    fn write_multiple_registers(&mut self, start_reg: u16, words: &[u16]) -> Result<()> {
         let mut req = Vec::with_capacity(5 + words.len() * 2);
         req.extend_from_slice(&start_reg.to_be_bytes());
         req.extend_from_slice(&(words.len() as u16).to_be_bytes());

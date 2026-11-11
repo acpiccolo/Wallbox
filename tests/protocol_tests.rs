@@ -48,7 +48,7 @@ mod tests {
         let fw = Evcc2Firmware::decode(data).unwrap();
         assert_eq!(fw.device_id, 1);
         assert_eq!(fw.pcba_version, "160307");
-        assert_eq!(fw.firmware_revision, "4.1");
+        assert_eq!(fw.firmware_revision(), "4.1");
         assert!(fw.current_sensor_present);
         assert!(fw.rdc_md_enabled);
         assert!(fw.welding_detection_enabled);

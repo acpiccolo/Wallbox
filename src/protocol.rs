@@ -102,6 +102,134 @@ pub fn decode_ascii_frame(frame: &str) -> Result<(u8, u8, Vec<u8>), Error> {
 // ABL EVCC2/3 (eMH1 / eMH2) Modbus ASCII Protocol (docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf)
 // =============================================================================
 
+/// Modbus address of the ABL eMH1 wallbox (range from 1 to 247, or 0 for broadcast).
+/// Modeled after SDM72-Powermeter protocol Address type.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Address(u8);
+
+impl Address {
+    pub const BROADCAST: u8 = 0;
+    pub const MIN: u8 = 1;
+    pub const MAX: u8 = 247;
+
+    pub const fn new(addr: u8) -> Self {
+        Self(addr)
+    }
+
+    pub const fn value(&self) -> u8 {
+        self.0
+    }
+}
+
+impl std::ops::Deref for Address {
+    type Target = u8;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl TryFrom<u8> for Address {
+    type Error = Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value == Self::BROADCAST || (Self::MIN..=Self::MAX).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(Error::AddressOutOfRange(value))
+        }
+    }
+}
+
+impl std::fmt::Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Baud rate of the Modbus ASCII protocol for the RS485 serial port.
+/// Supported rates for ABL EVCC2/3: 9600, 19200, 38400, 57600
+/// Modeled after SDM72-Powermeter protocol BaudRate type.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BaudRate {
+    B9600,
+    B19200,
+    #[default]
+    B38400,
+    B57600,
+}
+
+impl BaudRate {
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            Self::B9600 => 9600,
+            Self::B19200 => 19200,
+            Self::B38400 => 38400,
+            Self::B57600 => 57600,
+        }
+    }
+}
+
+impl TryFrom<u32> for BaudRate {
+    type Error = Error;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            9600 => Ok(Self::B9600),
+            19200 => Ok(Self::B19200),
+            38400 => Ok(Self::B38400),
+            57600 => Ok(Self::B57600),
+            _ => Err(Error::InvalidBaudRate),
+        }
+    }
+}
+
+impl From<&BaudRate> for u32 {
+    fn from(b: &BaudRate) -> u32 {
+        b.as_u32()
+    }
+}
+
+impl From<BaudRate> for u32 {
+    fn from(b: BaudRate) -> u32 {
+        b.as_u32()
+    }
+}
+
+impl std::fmt::Display for BaudRate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_u32())
+    }
+}
+
+/// Parity and stop bits of the Modbus ASCII protocol for the RS485 serial port.
+/// Modeled after SDM72-Powermeter protocol ParityAndStopBit type.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ParityAndStopBit {
+    /// No parity, one stop bit (8N1)
+    NoParityOneStopBit,
+    #[default]
+    /// Even parity, one stop bit (8E1, default for ABL eMH1)
+    EvenParityOneStopBit,
+    /// Odd parity, one stop bit (8O1)
+    OddParityOneStopBit,
+    /// No parity, two stop bits (8N2)
+    NoParityTwoStopBits,
+}
+
+impl std::fmt::Display for ParityAndStopBit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoParityOneStopBit => write!(f, "8N1 (no parity, 1 stop bit)"),
+            Self::EvenParityOneStopBit => write!(f, "8E1 (even parity, 1 stop bit)"),
+            Self::OddParityOneStopBit => write!(f, "8O1 (odd parity, 1 stop bit)"),
+            Self::NoParityTwoStopBits => write!(f, "8N2 (no parity, 2 stop bits)"),
+        }
+    }
+}
+
 /// Register addresses for ABL EVCC2/3 charge controllers
 pub mod evcc2_registers {
     pub const REG_FIRMWARE: u16 = 0x0001; // 2 words
@@ -118,9 +246,10 @@ pub mod evcc2_registers {
 }
 
 /// EVCC2/3 state code (as reported in register 0x0004 and 0x002E).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Evcc2Status {
+    #[default]
     /// 0xA1: Waiting for EV (IEC State A)
     WaitingForEv,
     /// 0xB1: EV is asking for charging (IEC State B)
@@ -296,12 +425,13 @@ impl std::fmt::Display for Evcc2Status {
 }
 
 /// Firmware and hardware version info from Register 0x0001 (2 words).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Evcc2Firmware {
     pub device_id: u8,
-    pub pcba_version: String,
-    pub firmware_revision: String,
+    pub pcba_version: &'static str,
+    pub firmware_major: u8,
+    pub firmware_minor: u8,
     pub current_sensor_present: bool,
     pub rdc_md_enabled: bool,
     pub welding_detection_enabled: bool,
@@ -318,18 +448,17 @@ impl Evcc2Firmware {
         let b1 = payload[1];
         let pcba_bits = (b1 >> 6) & 0x03;
         let pcba_version = match pcba_bits {
-            0 => "141215".to_string(),
-            1 => "160307".to_string(),
-            2 => "170725".to_string(),
-            _ => format!("unknown ({pcba_bits})"),
+            0 => "141215",
+            1 => "160307",
+            2 => "170725",
+            _ => "unknown",
         };
         let device_id = b1 & 0x3F;
 
         // Byte 2: Major (bits 7..4) and Minor (bits 3..0)
         let b2 = payload[2];
-        let major = (b2 >> 4) & 0x0F;
-        let minor = b2 & 0x0F;
-        let firmware_revision = format!("{major}.{minor}");
+        let firmware_major = (b2 >> 4) & 0x0F;
+        let firmware_minor = b2 & 0x0F;
 
         // Byte 3: config flags
         let b3 = payload[3];
@@ -341,19 +470,25 @@ impl Evcc2Firmware {
         Ok(Self {
             device_id,
             pcba_version,
-            firmware_revision,
+            firmware_major,
+            firmware_minor,
             current_sensor_present,
             rdc_md_enabled,
             welding_detection_enabled,
             outlet_enabled,
         })
     }
+
+    /// Formatted firmware revision string (e.g. "1.1").
+    pub fn firmware_revision(&self) -> String {
+        format!("{}.{}", self.firmware_major, self.firmware_minor)
+    }
 }
 
 impl std::fmt::Display for Evcc2Firmware {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Device ID: {}", self.device_id)?;
-        writeln!(f, "Firmware Revision: V{}", self.firmware_revision)?;
+        writeln!(f, "Firmware Revision: V{}", self.firmware_revision())?;
         writeln!(f, "PCBA Version: {}", self.pcba_version)?;
         writeln!(
             f,
@@ -395,7 +530,7 @@ impl std::fmt::Display for Evcc2Firmware {
 }
 
 /// Modbus communication settings from Register 0x0003 (1 word / 2 bytes).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Evcc2ModbusSettings {
     pub baud_rate: u32,
@@ -448,7 +583,7 @@ impl std::fmt::Display for Evcc2ModbusSettings {
 }
 
 /// System flags from Register 0x0006 (2 words / 4 bytes).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Evcc2SystemFlags {
     pub raw_flags: u16,
@@ -537,7 +672,7 @@ impl std::fmt::Display for Evcc2SystemFlags {
 }
 
 /// Complete measurement and status set from Register 0x002E (5 words / 10 bytes).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Evcc2Measurements {
     pub status: Evcc2Status,
