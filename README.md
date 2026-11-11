@@ -214,7 +214,7 @@ The `abl_evcc_lib` crate provides two main ways to interact with the ABL eMH1 en
 
 ```rust
 use abl_evcc_lib::{
-    ascii_client::AsciiClient,
+    tokio_sync::AsciiClient,
     tokio_sync_safe_client::SafeClient,
 };
 use std::time::Duration;

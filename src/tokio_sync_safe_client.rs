@@ -4,9 +4,8 @@
 //! to be shared across threads safely.
 
 use crate::{
-    ascii_client::AsciiClient,
     protocol::{Evcc2Firmware, Evcc2Measurements, Evcc2ModbusSettings, Evcc2Status, Evcc2SystemFlags},
-    tokio_sync::Evcc2,
+    tokio_sync::{AsciiClient, Evcc2},
 };
 use anyhow::Result;
 use std::sync::{Arc, Mutex};

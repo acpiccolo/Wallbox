@@ -1,4 +1,4 @@
-use abl_evcc_lib::{ascii_client::AsciiClient, protocol as proto};
+use abl_evcc_lib::{protocol as proto, tokio_sync::AsciiClient};
 use anyhow::{Context, Result};
 use clap::Parser;
 use flexi_logger::{Logger, LoggerHandle};

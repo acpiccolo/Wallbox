@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod safe_client_tests {
     use abl_evcc_lib::{
-        ascii_client::AsciiClient,
         protocol::Evcc2Status,
+        tokio_sync::AsciiClient,
         tokio_sync_safe_client::SafeClient,
     };
     use std::{

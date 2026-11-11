@@ -257,7 +257,7 @@ impl MqttPublisher {
     /// Check for incoming control messages without blocking.
     pub fn check_incoming_messages(
         &self,
-        wallbox: &mut abl_evcc_lib::ascii_client::AsciiClient,
+        wallbox: &mut abl_evcc_lib::tokio_sync::AsciiClient,
     ) -> Result<()> {
         let Some(consumer) = &self.consumer else {
             return Ok(());

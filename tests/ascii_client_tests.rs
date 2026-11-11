@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod ascii_client_mock_tests {
     use abl_evcc_lib::{
-        ascii_client::AsciiClient,
         protocol::Evcc2Status,
+        tokio_sync::AsciiClient,
     };
     use std::{
         io::{BufRead, BufReader, Write},

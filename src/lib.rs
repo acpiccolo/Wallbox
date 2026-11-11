@@ -12,7 +12,6 @@
 
 /// Contains error types for the library.
 mod error;
-pub mod ascii_client;
 pub mod protocol;
 
 pub use error::Error;
@@ -29,5 +28,6 @@ pub mod tokio_async;
 #[cfg(feature = "safe-client-async")]
 pub mod tokio_async_safe_client;
 
-pub use ascii_client::AsciiClient;
+#[cfg(feature = "tokio-sync")]
+pub use tokio_sync::{AsciiClient, Evcc2};
 pub use protocol::*;
