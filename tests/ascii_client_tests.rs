@@ -42,16 +42,18 @@ mod ascii_client_mock_tests {
         });
 
         let stream = std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
-        let mut client = AsciiClient::from_tcp(
-            stream,
-            1,
-            Duration::from_millis(500),
-            Duration::from_millis(20),
-        )
-        .unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+
+        let mut client = AsciiClient::from_tcp(stream, 1, Duration::from_millis(20)).unwrap();
 
         assert_eq!(client.slave_id(), 1);
         assert_eq!(client.delay(), Duration::from_millis(20));
+        // Automatically detected from stream
         assert_eq!(client.timeout(), Duration::from_millis(500));
         assert!(client.peer_addr().is_some());
 

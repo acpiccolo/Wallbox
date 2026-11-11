@@ -19,6 +19,7 @@ mod async_client_tests {
         let client = AsyncAsciiClient::connect_tcp(
             &format!("127.0.0.1:{}", port),
             1,
+            Duration::from_secs(1),
             Duration::from_millis(10),
         )
         .await
@@ -95,6 +96,7 @@ mod async_client_tests {
         let mut client = AsyncAsciiClient::connect_tcp(
             &format!("127.0.0.1:{}", port),
             1,
+            Duration::from_secs(2),
             Duration::from_millis(10),
         )
         .await

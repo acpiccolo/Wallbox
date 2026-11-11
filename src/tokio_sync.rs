@@ -64,14 +64,20 @@ pub struct AsciiClient {
 
 impl AsciiClient {
     /// Create a client directly from an opened serial port with specified `slave_id`.
+    ///
+    /// The timeout is determined automatically from the configured `port.timeout()`.
+    /// If `port.timeout()` is zero, a default timeout of 5 seconds is applied.
     pub fn from_serial(
         mut port: Box<dyn tokio_serial::SerialPort>,
         slave_id: u8,
-        timeout: Duration,
         delay: Duration,
     ) -> Result<Self> {
-        port.set_timeout(timeout)
-            .with_context(|| "Failed to set serial port timeout")?;
+        let mut timeout = port.timeout();
+        if timeout.is_zero() {
+            timeout = Duration::from_secs(5);
+            port.set_timeout(timeout)
+                .with_context(|| "Failed to set default serial port timeout")?;
+        }
         Ok(Self {
             reader: BufReader::new(AsciiTransport::Serial(port)),
             slave_id,
@@ -81,18 +87,44 @@ impl AsciiClient {
     }
 
     /// Create a client directly from an established TCP stream with specified `slave_id`.
-    pub fn from_tcp(
-        stream: TcpStream,
-        slave_id: u8,
-        timeout: Duration,
-        delay: Duration,
-    ) -> Result<Self> {
-        stream
-            .set_read_timeout(Some(timeout))
-            .with_context(|| "Failed to set TCP read timeout")?;
-        stream
-            .set_write_timeout(Some(timeout))
-            .with_context(|| "Failed to set TCP write timeout")?;
+    ///
+    /// The timeout is determined automatically from the stream's configured `read_timeout` and `write_timeout`.
+    /// If read and write timeouts are not equal or only one is set, both are synchronized.
+    /// If neither is set, a default timeout of 5 seconds is configured for both.
+    pub fn from_tcp(stream: TcpStream, slave_id: u8, delay: Duration) -> Result<Self> {
+        let r_timeout = stream
+            .read_timeout()
+            .with_context(|| "Failed to get TCP read timeout")?;
+        let w_timeout = stream
+            .write_timeout()
+            .with_context(|| "Failed to get TCP write timeout")?;
+
+        let timeout = match (r_timeout, w_timeout) {
+            (Some(r), Some(w)) if r == w && !r.is_zero() => r,
+            (Some(r), _) if !r.is_zero() => {
+                stream
+                    .set_write_timeout(Some(r))
+                    .with_context(|| "Failed to synchronize TCP write timeout")?;
+                r
+            }
+            (_, Some(w)) if !w.is_zero() => {
+                stream
+                    .set_read_timeout(Some(w))
+                    .with_context(|| "Failed to synchronize TCP read timeout")?;
+                w
+            }
+            _ => {
+                let default_timeout = Duration::from_secs(5);
+                stream
+                    .set_read_timeout(Some(default_timeout))
+                    .with_context(|| "Failed to set default TCP read timeout")?;
+                stream
+                    .set_write_timeout(Some(default_timeout))
+                    .with_context(|| "Failed to set default TCP write timeout")?;
+                default_timeout
+            }
+        };
+
         Ok(Self {
             reader: BufReader::new(AsciiTransport::Tcp(stream)),
             slave_id,
@@ -120,7 +152,7 @@ impl AsciiClient {
             .open()
             .with_context(|| format!("Failed to open serial device {device}"))?;
 
-        Self::from_serial(port, slave_id, timeout, delay)
+        Self::from_serial(port, slave_id, delay)
     }
 
     /// Connect via TCP (e.g. to serial-to-ethernet bridge like Elfin EW11 at `192.168.3.128:8899`).
@@ -137,8 +169,10 @@ impl AsciiClient {
 
         let stream = TcpStream::connect_timeout(&socket_addr, timeout)
             .with_context(|| format!("Failed to connect to TCP server {tcp_addr}"))?;
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
 
-        Self::from_tcp(stream, slave_id, timeout, delay)
+        Self::from_tcp(stream, slave_id, delay)
     }
 
     /// Returns the currently configured slave ID.

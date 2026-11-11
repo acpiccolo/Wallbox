@@ -100,13 +100,8 @@ impl AsyncAsciiClient {
         }
     }
 
-    /// Connect via direct TCP to a transparent serial-to-ethernet server (e.g. `192.168.3.128:8899`).
-    pub async fn connect_tcp(tcp_addr: &str, slave_id: u8, delay: Duration) -> Result<Self> {
-        Self::connect_tcp_timeout(tcp_addr, slave_id, Duration::from_secs(5), delay).await
-    }
-
-    /// Connect via direct TCP with explicit connect/read timeout.
-    pub async fn connect_tcp_timeout(
+    /// Connect via direct TCP with explicit connect/read timeout to a transparent serial-to-ethernet server (e.g. `192.168.3.128:8899`).
+    pub async fn connect_tcp(
         tcp_addr: &str,
         slave_id: u8,
         timeout: Duration,
@@ -123,28 +118,8 @@ impl AsyncAsciiClient {
         Ok(Self::from_tcp(stream, slave_id, timeout, delay))
     }
 
-    /// Connect via asynchronous serial port (e.g. `/dev/ttyUSB0`, 38400 8E1).
+    /// Connect via asynchronous serial port with explicit timeout (e.g. `/dev/ttyUSB0`, 38400 8E1).
     pub fn connect_serial(
-        device: &str,
-        baud_rate: u32,
-        parity: tokio_serial::Parity,
-        stop_bits: tokio_serial::StopBits,
-        slave_id: u8,
-        delay: Duration,
-    ) -> Result<Self> {
-        Self::connect_serial_timeout(
-            device,
-            baud_rate,
-            parity,
-            stop_bits,
-            slave_id,
-            Duration::from_secs(5),
-            delay,
-        )
-    }
-
-    /// Connect via asynchronous serial port with explicit timeout.
-    pub fn connect_serial_timeout(
         device: &str,
         baud_rate: u32,
         parity: tokio_serial::Parity,
