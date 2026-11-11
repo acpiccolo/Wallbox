@@ -20,6 +20,10 @@ This repository contains a Rust library and command-line tool for interacting wi
 ABL eMH1 wallboxes communicate via **Modbus ASCII** (default 38400 Baud, 8E1).
 Requests start with `:` (`0x3A`), responses start with `>` (`0x3E`), and frames are terminated with `\r\n` (`0x0D 0x0A`) with a Longitudinal Redundancy Check (LRC) checksum.
 
+<p align="center">
+  <img src="docs/IMG_1.jpg" alt="ABL eMH1 Wallbox" width="360" />
+</p>
+
 This tool provides two direct connection modes:
 - **`tcp`**: Connects directly via TCP to transparent serial servers (such as **Elfin EW11**, USR-TCP232, Protoss-PE11, etc.) without requiring `socat`.
 - **`serial`**: Connects via local serial devices or virtual serial ports (default: `/dev/ttyUSB0`, or Windows COM ports) with configurable baud rate, parity, stop bits, address, and automatic serial delay timing verification.
@@ -75,6 +79,17 @@ Configurable options:
 - `--baud-rate <BAUD>`: Baud rate (default: `38400`)
 - `--parity-and-stop-bit <PARITY>`: Parity and stop bits (`ep1b` for 8E1 [default], `np1b` for 8N1, `op1b` for 8O1, `np2b` for 8N2)
 - `--address <ADDRESS>`: Modbus slave address 1..16 (default: `1`)
+
+### Hardware Connection & RS485 Pinout
+The ABL eMH1 features an internal communication interface board (`ABL 181002`) with WAGO / RJ12 terminals for RS485 communication:
+
+<p align="center">
+  <img src="docs/IMG_2.jpg" alt="ABL eMH1 RS485 Board Wiring" width="400" />
+</p>
+
+- **A** (Data+ / RS485 A): Yellow or blue lead according to wiring scheme
+- **B** (Data- / RS485 B): Blue or yellow lead according to wiring scheme
+- **M / GND** (Common ground): Reference ground connection between RS485 transceiver and wallbox board
 
 ---
 

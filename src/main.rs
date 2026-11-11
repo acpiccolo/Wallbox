@@ -541,35 +541,6 @@ fn handle_tcp_scan(
     bail!("No ABL eMH1 wallbox detected across addresses 0..={max_address}.");
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn serial_delay() {
-        assert_eq!(minimum_serial_delay(1200).as_millis(), 32);
-        assert_eq!(minimum_serial_delay(2400).as_millis(), 16);
-        assert_eq!(minimum_serial_delay(4800).as_millis(), 8);
-        assert_eq!(minimum_serial_delay(9600).as_millis(), 4);
-        assert_eq!(minimum_serial_delay(19200).as_millis(), 2);
-        assert_eq!(minimum_serial_delay(38400), Duration::from_micros(1_750));
-        assert_eq!(minimum_serial_delay(57600), Duration::from_micros(1_750));
-
-        // Fallback test
-        let low_delay = Duration::from_millis(1);
-        assert_eq!(
-            check_serial_delay(low_delay, 9600),
-            Duration::from_millis(4)
-        );
-
-        let good_delay = Duration::from_millis(50);
-        assert_eq!(
-            check_serial_delay(good_delay, 38400),
-            Duration::from_millis(50)
-        );
-    }
-}
-
 fn main() -> Result<()> {
     let args = commandline::Args::parse();
     let _log_handle = logging_init(args.verbose.log_level_filter());
@@ -637,4 +608,33 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_delay() {
+        assert_eq!(minimum_serial_delay(1200).as_millis(), 32);
+        assert_eq!(minimum_serial_delay(2400).as_millis(), 16);
+        assert_eq!(minimum_serial_delay(4800).as_millis(), 8);
+        assert_eq!(minimum_serial_delay(9600).as_millis(), 4);
+        assert_eq!(minimum_serial_delay(19200).as_millis(), 2);
+        assert_eq!(minimum_serial_delay(38400), Duration::from_micros(1_750));
+        assert_eq!(minimum_serial_delay(57600), Duration::from_micros(1_750));
+
+        // Fallback test
+        let low_delay = Duration::from_millis(1);
+        assert_eq!(
+            check_serial_delay(low_delay, 9600),
+            Duration::from_millis(4)
+        );
+
+        let good_delay = Duration::from_millis(50);
+        assert_eq!(
+            check_serial_delay(good_delay, 38400),
+            Duration::from_millis(50)
+        );
+    }
 }
