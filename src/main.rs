@@ -1,9 +1,9 @@
 use abl_evcc_lib::{protocol as proto, tokio_sync::AsciiClient};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use flexi_logger::{Logger, LoggerHandle};
 use log::*;
-use std::{ops::Deref, panic, time::Duration};
+use std::{io::Write, ops::Deref, panic, time::Duration};
 
 mod commandline;
 mod daemon;
@@ -301,8 +301,243 @@ fn handle_commands(
                 .with_context(|| "Failed to execute wake-up sequence")?;
             println!("Wake-up sequence completed.");
         }
+        commandline::Commands::Scan { max_address, force } => {
+            handle_tcp_scan(client, *max_address, *force, delay)?;
+        }
     }
     Ok(())
+}
+
+fn confirm_only_one_module_connected(force: bool) -> Result<bool> {
+    if force {
+        return Ok(true);
+    }
+    println!(
+        "WARNING: This scan operation should only be performed if a SINGLE ABL eMH1 wallbox\n\
+         is connected to the Modbus RS485 bus segment.\n\
+         Multiple devices on the same bus without known IDs may lead to communication collisions."
+    );
+    print!("Do you want to continue with this understanding? [y/N]: ");
+    std::io::stdout()
+        .flush()
+        .context("Failed to flush stdout")?;
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .context("Failed to read user confirmation")?;
+    Ok(input.trim().eq_ignore_ascii_case("y"))
+}
+
+fn scan_device_address(client: &mut AsciiClient, slave_id: u8) -> Result<()> {
+    client.set_slave_id(slave_id);
+    let firmware = client.read_firmware()?;
+    let status = client.read_status().ok();
+    println!("SUCCESS!");
+    println!("  Device found with Modbus Slave ID: {slave_id}");
+    if let Some(st) = status {
+        println!("  Vehicle / Charger Status: {st:?} ({})", st.as_char());
+    }
+    println!("  Firmware Revision: {}", firmware.firmware_revision);
+    println!("  PCBA Version: {}", firmware.pcba_version);
+    Ok(())
+}
+
+fn handle_serial_scan(
+    device: &str,
+    max_address: u8,
+    force: bool,
+    timeout: Duration,
+    delay: Duration,
+) -> Result<()> {
+    if !confirm_only_one_module_connected(force)? {
+        println!("Serial scan aborted by user.");
+        return Ok(());
+    }
+
+    println!("Starting serial bus scan on {device} (max address: {max_address})...");
+
+    let candidate_configs = [
+        (
+            38400,
+            tokio_serial::Parity::Even,
+            tokio_serial::StopBits::One,
+            "38400 8E1",
+        ),
+        (
+            19200,
+            tokio_serial::Parity::Even,
+            tokio_serial::StopBits::One,
+            "19200 8E1",
+        ),
+        (
+            9600,
+            tokio_serial::Parity::Even,
+            tokio_serial::StopBits::One,
+            "9600 8E1",
+        ),
+        (
+            38400,
+            tokio_serial::Parity::None,
+            tokio_serial::StopBits::One,
+            "38400 8N1",
+        ),
+        (
+            19200,
+            tokio_serial::Parity::None,
+            tokio_serial::StopBits::One,
+            "19200 8N1",
+        ),
+        (
+            9600,
+            tokio_serial::Parity::None,
+            tokio_serial::StopBits::One,
+            "9600 8N1",
+        ),
+    ];
+
+    // Priority 1: Check default (38400 8E1, Slave ID 1)
+    print!("Checking default: 38400 8E1, Slave ID 1 ... ");
+    std::io::stdout()
+        .flush()
+        .context("Failed to flush stdout")?;
+    if let Ok(mut client) = AsciiClient::connect_serial(
+        device,
+        38400,
+        tokio_serial::Parity::Even,
+        tokio_serial::StopBits::One,
+        1,
+        timeout,
+        delay,
+    ) {
+        if scan_device_address(&mut client, 1).is_ok() {
+            println!("  Communication established at 38400 baud, 8E1");
+            return Ok(());
+        }
+        println!("no response.");
+
+        // Priority 2: Check broadcast address 0 on default 38400 8E1
+        print!("Checking broadcast address 0 at 38400 8E1 ... ");
+        std::io::stdout()
+            .flush()
+            .context("Failed to flush stdout")?;
+        std::thread::sleep(delay);
+        if scan_device_address(&mut client, 0).is_ok() {
+            println!("  Communication established at 38400 baud, 8E1 (via broadcast address 0)");
+            return Ok(());
+        }
+        println!("no response.");
+
+        // Priority 3: Check addresses 2..=max_address on default 38400 8E1
+        for addr in 2..=max_address {
+            print!("Checking 38400 8E1, Slave ID {addr} ... ");
+            std::io::stdout()
+                .flush()
+                .context("Failed to flush stdout")?;
+            std::thread::sleep(delay);
+            if scan_device_address(&mut client, addr).is_ok() {
+                println!("  Communication established at 38400 baud, 8E1");
+                return Ok(());
+            }
+            println!("no response.");
+        }
+    } else {
+        println!("failed to open serial port.");
+    }
+
+    // Priority 4: Try remaining baud rate / parity combinations across addresses
+    for &(baud, parity, stop_bits, desc) in &candidate_configs[1..] {
+        let scan_delay = check_serial_delay(delay, baud);
+        println!("Testing configuration: {desc} ...");
+        let mut client = match AsciiClient::connect_serial(
+            device, baud, parity, stop_bits, 1, timeout, scan_delay,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                debug!("Failed to configure serial port for {desc}: {e}");
+                continue;
+            }
+        };
+
+        // Check ID 1, then Broadcast 0
+        for &addr in &[1, 0] {
+            print!("  Checking {desc}, Slave ID {addr} ... ");
+            std::io::stdout()
+                .flush()
+                .context("Failed to flush stdout")?;
+            std::thread::sleep(scan_delay);
+            if scan_device_address(&mut client, addr).is_ok() {
+                println!("  Communication established at {desc}");
+                return Ok(());
+            }
+            println!("no response.");
+        }
+
+        // Check addresses 2..=max_address
+        for addr in 2..=max_address {
+            print!("  Checking {desc}, Slave ID {addr} ... ");
+            std::io::stdout()
+                .flush()
+                .context("Failed to flush stdout")?;
+            std::thread::sleep(scan_delay);
+            if scan_device_address(&mut client, addr).is_ok() {
+                println!("  Communication established at {desc}");
+                return Ok(());
+            }
+            println!("no response.");
+        }
+    }
+
+    bail!("No ABL eMH1 wallbox detected on {device} across tested baud rates and addresses 0..={max_address}.");
+}
+
+fn handle_tcp_scan(
+    client: &mut AsciiClient,
+    max_address: u8,
+    force: bool,
+    delay: Duration,
+) -> Result<()> {
+    if !confirm_only_one_module_connected(force)? {
+        println!("TCP scan aborted by user.");
+        return Ok(());
+    }
+
+    println!("Starting TCP slave ID scan (max address: {max_address})...");
+
+    // 1. Check default ID 1
+    print!("Checking default: Slave ID 1 ... ");
+    std::io::stdout()
+        .flush()
+        .context("Failed to flush stdout")?;
+    if scan_device_address(client, 1).is_ok() {
+        return Ok(());
+    }
+    println!("no response.");
+
+    // 2. Check broadcast address 0
+    print!("Checking broadcast address 0 ... ");
+    std::io::stdout()
+        .flush()
+        .context("Failed to flush stdout")?;
+    std::thread::sleep(delay);
+    if scan_device_address(client, 0).is_ok() {
+        return Ok(());
+    }
+    println!("no response.");
+
+    // 3. Scan addresses 2..=max_address
+    for addr in 2..=max_address {
+        print!("Checking Slave ID {addr} ... ");
+        std::io::stdout()
+            .flush()
+            .context("Failed to flush stdout")?;
+        std::thread::sleep(delay);
+        if scan_device_address(client, addr).is_ok() {
+            return Ok(());
+        }
+        println!("no response.");
+    }
+
+    bail!("No ABL eMH1 wallbox detected across addresses 0..={max_address}.");
 }
 
 #[cfg(test)]
@@ -352,6 +587,10 @@ fn main() -> Result<()> {
             );
             delay = check_serial_delay(delay, *baud_rate);
 
+            if let commandline::Commands::Scan { max_address, force } = command {
+                return handle_serial_scan(device, *max_address, *force, args.timeout, delay);
+            }
+
             let (parity, stop_bits) = match parity_and_stop_bit {
                 commandline::ParityAndStopBit::EvenParityOneStopBit => {
                     (tokio_serial::Parity::Even, tokio_serial::StopBits::One)
@@ -386,6 +625,13 @@ fn main() -> Result<()> {
             trace!("Open TCP {address} slave {slave}");
             let mut client = AsciiClient::connect_tcp(address, *slave, args.timeout, delay)?;
             handle_commands(&mut client, command, delay, args.no_json)?;
+        }
+        commandline::Connection::SerialScan {
+            device,
+            max_address,
+            force,
+        } => {
+            return handle_serial_scan(device, *max_address, *force, args.timeout, delay);
         }
     }
 

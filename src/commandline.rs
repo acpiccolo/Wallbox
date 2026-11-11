@@ -90,6 +90,20 @@ pub enum Connection {
         #[command(subcommand)]
         command: Commands,
     },
+    /// Scan serial RS485 bus for connected ABL eMH1 wallboxes across baud rates and addresses
+    SerialScan {
+        /// Serial device path (e.g. /dev/ttyUSB0, COM1)
+        #[arg(short, long, default_value_t = default_device_name())]
+        device: String,
+
+        /// Maximum Modbus slave address to scan (default: 31, max: 247)
+        #[arg(long, default_value = "31")]
+        max_address: u8,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
@@ -169,6 +183,16 @@ pub enum Commands {
     /// Reset the wallbox charge controller (Register 0x0005, code 0x5A5A)
     Reset {
         /// Skip confirmation when resetting the charge controller
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Scan the bus for connected ABL eMH1 wallbox (checks default 1, broadcast 0, then range)
+    Scan {
+        /// Maximum Modbus slave address to scan (default: 31, max: 247)
+        #[arg(long, default_value = "31")]
+        max_address: u8,
+
+        /// Skip confirmation prompt
         #[arg(short, long)]
         force: bool,
     },

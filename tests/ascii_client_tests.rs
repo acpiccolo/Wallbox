@@ -116,4 +116,43 @@ mod ascii_client_mock_tests {
         assert!((meas.configured_current_amperes - 16.0).abs() < 0.1);
         assert_eq!(meas.current_l1_amperes, 0.0);
     }
+
+    #[test]
+    fn test_mock_tcp_scan_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // Server ignores ID 1, but responds on ID 2
+        thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(socket.try_clone().unwrap());
+
+            // 1. Request for ID 1 firmware fails (server responds with empty or ignores)
+            // But let us reply to ID 2
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 0 {
+                if line.contains(":020300010002") {
+                    // Response for ID 2, FC 03, 4 bytes payload
+                    // Bytes: 02, 03, 04, 01, 01, 11, 16 -> sum = 0x32 -> neg = 0xCE
+                    let _ = socket.write_all(b">02030401011116CE\r\n");
+                    let _ = socket.flush();
+                    break;
+                }
+                line.clear();
+            }
+        });
+
+        let mut client = AsciiClient::connect_tcp(
+            &format!("127.0.0.1:{}", port),
+            1,
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+
+        // Switch to slave ID 2 and query
+        client.set_slave_id(2);
+        let fw = client.read_firmware().unwrap();
+        assert_eq!(fw.firmware_revision, "1.1");
+    }
 }
