@@ -1,7 +1,7 @@
 //! Modbus ASCII transport and client for ABL EVCC2/3 wallboxes (eMH1 / eMH2).
 //!
 //! Handles encoding/decoding Modbus ASCII frames, LRC checksum calculation and verification,
-//! and communication over either a local serial port (e.g. `/dev/ttyElfin` or `/dev/ttyUSB0`)
+//! and communication over either a local serial port (e.g. `/dev/ttyUSB0`)
 //! or a direct TCP connection (e.g. `192.168.3.128:8899`).
 
 use crate::protocol::{
@@ -55,7 +55,7 @@ pub struct AsciiClient {
 }
 
 impl AsciiClient {
-    /// Connect via serial device (e.g. `/dev/ttyElfin`, default 38400 8E1).
+    /// Connect via serial device (e.g. `/dev/ttyUSB0`, default 38400 8E1).
     pub fn connect_serial(
         device: &str,
         baud_rate: u32,
@@ -131,11 +131,17 @@ impl AsciiClient {
             .with_context(|| format!("Failed to decode response frame: {:?}", line.trim()))?;
 
         if dev_id != self.slave_id {
-            bail!("Mismatched slave ID: expected {}, got {}", self.slave_id, dev_id);
+            bail!(crate::Error::SlaveIdMismatch {
+                expected: self.slave_id,
+                received: dev_id,
+            });
         }
 
         if fc != function_code {
-            bail!("Mismatched function code: expected {:#04X}, got {:#04X}", function_code, fc);
+            bail!(crate::Error::FunctionCodeMismatch {
+                expected: function_code,
+                received: fc,
+            });
         }
 
         Ok(payload)
@@ -156,12 +162,15 @@ impl AsciiClient {
                 Ok(payload) => {
                     // Modbus FC 0x03 response payload format: [byte_count, data...]
                     if payload.is_empty() {
-                        bail!("Empty payload received for ReadHoldingRegisters");
+                        bail!(crate::Error::EmptyPayload);
                     }
                     let byte_count = payload[0] as usize;
                     let data = &payload[1..];
                     if data.len() < byte_count {
-                        bail!("Incomplete data payload: expected {} bytes, got {}", byte_count, data.len());
+                        bail!(crate::Error::IncompletePayload {
+                            expected: byte_count,
+                            received: data.len(),
+                        });
                     }
                     return Ok(data[..byte_count].to_vec());
                 }

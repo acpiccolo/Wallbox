@@ -1,41 +1,7 @@
 //! This module defines the core data structures, protocol framing, and register mappings
 //! for ABL eMH1 / eMH2 (EVCC2/3) wallboxes using Modbus ASCII.
 
-/// Represents errors that can occur within the EVCC protocol logic or Modbus ASCII framing.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum Error {
-    /// The provided LRC checksum did not match the calculated checksum.
-    #[error("LRC checksum error: expected {expected:#04X}, calculated {calculated:#04X}")]
-    InvalidLrc { expected: u8, calculated: u8 },
-
-    /// The frame format is invalid or malformed.
-    #[error("Invalid Modbus ASCII frame format")]
-    InvalidFrame,
-
-    /// Failed to parse hexadecimal representation.
-    #[error("Failed to decode hex string")]
-    HexDecodeError,
-
-    /// An exception response was returned by the slave device.
-    #[error("Modbus exception response: function code {function_code:#04X}, exception code {exception_code:#04X}")]
-    ExceptionResponse { function_code: u8, exception_code: u8 },
-
-    /// The provided Device ID is outside the permissible range (0x01..0x10 or 0x00 for broadcast).
-    #[error("Device ID {0} is out of permissible range (1..=16)")]
-    DeviceIdOutOfRange(u8),
-
-    /// The provided current is out of permissible range.
-    #[error("Charging current {0}A is out of permissible range (0 or 6..=80A)")]
-    CurrentOutOfRange(u16),
-
-    /// An unexpected or invalid value was received in a register field.
-    #[error("Invalid register value encountered")]
-    InvalidValue,
-
-    /// The number of words provided is incorrect for the target register or structure.
-    #[error("Words count error for register decoding")]
-    WordsCountError,
-}
+use crate::error::Error;
 
 /// Calculates the Modbus ASCII Longitudinal Redundancy Check (LRC) checksum over binary bytes.
 ///

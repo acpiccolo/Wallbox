@@ -268,7 +268,7 @@ This crate uses a feature-based system to minimize dependencies:
 ---
 
 ## Technical Documentation
-- [`docs/ABL_eMH1_Command_and_Value_Reference.md`](./docs/ABL_eMH1_Command_and_Value_Reference.md) – Ausführliche Befehls-, Werte- und Register-Referenz (Deutsch) mit Glossar (CP, CS, PWM, Duty Cycle, RDC-MD, etc.) und detaillierten Felddefinitionen.
+- [`docs/ABL_eMH1_Command_and_Value_Reference_DE.md`](./docs/ABL_eMH1_Command_and_Value_Reference_DE.md) – Ausführliche Befehls-, Werte- und Register-Referenz (Deutsch) mit Glossar (CP, CS, PWM, Duty Cycle, RDC-MD, etc.) und detaillierten Felddefinitionen.
 - [`docs/ABL_eMH1_Command_and_Value_Reference_EN.md`](./docs/ABL_eMH1_Command_and_Value_Reference_EN.md) – Comprehensive Command, Value, and Register Reference (English) with glossary and field specifications.
 - [`docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf`](./docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf) – Official ABL EVCC2/3 Modbus ASCII specification.
 

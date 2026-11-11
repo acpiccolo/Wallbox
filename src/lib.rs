@@ -10,8 +10,12 @@
 //!    device's Modbus ASCII commands. This API offers maximum flexibility but requires manual management
 //!    of the underlying context. See the [`tokio_sync`] and [`tokio_async`] modules.
 
+/// Contains error types for the library.
+mod error;
 pub mod ascii_client;
 pub mod protocol;
+
+pub use error::Error;
 
 #[cfg(feature = "tokio-sync")]
 pub mod tokio_sync;
