@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "safe-client-sync"))]
 mod safe_client_tests {
     use abl_evcc_lib::{
         protocol::Evcc2Status,

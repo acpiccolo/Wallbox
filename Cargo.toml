@@ -20,9 +20,7 @@ default = ["bin-dependencies"]
 bin-dependencies = [
     "serde",
     "safe-client-sync",
-    "safe-client-async",
     "tokio-sync",
-    "tokio-async",
     "clap/derive",
     "dep:clap-verbosity-flag",
     "dep:flexi_logger",

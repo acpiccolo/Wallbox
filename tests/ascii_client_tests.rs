@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "tokio-sync"))]
 mod ascii_client_mock_tests {
     use abl_evcc_lib::{
         protocol::Evcc2Status,
