@@ -16,7 +16,12 @@ pub fn calculate_lrc(bytes: &[u8]) -> u8 {
 ///
 /// Returns an ASCII string starting with `start_delimiter` (default `:` or `>`),
 /// followed by hex-encoded payload (device_id, function_code, payload), 2-digit hex LRC checksum, and `\r\n`.
-pub fn encode_ascii_frame(device_id: u8, function_code: u8, payload: &[u8], start_delimiter: char) -> String {
+pub fn encode_ascii_frame(
+    device_id: u8,
+    function_code: u8,
+    payload: &[u8],
+    start_delimiter: char,
+) -> String {
     let mut raw_bytes = Vec::with_capacity(2 + payload.len());
     raw_bytes.push(device_id);
     raw_bytes.push(function_code);
@@ -56,7 +61,8 @@ pub fn decode_ascii_frame(frame: &str) -> Result<(u8, u8, Vec<u8>), Error> {
 
     let mut bytes = Vec::with_capacity(hex_part.len() / 2);
     for i in (0..hex_part.len()).step_by(2) {
-        let byte = u8::from_str_radix(&hex_part[i..i + 2], 16).map_err(|_| Error::HexDecodeError)?;
+        let byte =
+            u8::from_str_radix(&hex_part[i..i + 2], 16).map_err(|_| Error::HexDecodeError)?;
         bytes.push(byte);
     }
 
@@ -98,15 +104,15 @@ pub fn decode_ascii_frame(frame: &str) -> Result<(u8, u8, Vec<u8>), Error> {
 
 /// Register addresses for ABL EVCC2/3 charge controllers
 pub mod evcc2_registers {
-    pub const REG_FIRMWARE: u16 = 0x0001;     // 2 words
+    pub const REG_FIRMWARE: u16 = 0x0001; // 2 words
     pub const REG_MODBUS_SETTINGS: u16 = 0x0003; // 1 word
-    pub const REG_STATUS: u16 = 0x0004;       // 1 word
+    pub const REG_STATUS: u16 = 0x0004; // 1 word
     pub const REG_MODIFY_STATE: u16 = 0x0005; // 1 word
     pub const REG_SYSTEM_FLAGS: u16 = 0x0006; // 2 words
-    pub const REG_ENABLED: u16 = 0x000F;      // 5 words
-    pub const REG_AMPS_CONFIG: u16 = 0x0014;  // 1 word
-    pub const REG_STATUS_LONG: u16 = 0x002E;  // 5 words
-    pub const REG_STATUS_AMPS: u16 = 0x0033;  // 3 words
+    pub const REG_ENABLED: u16 = 0x000F; // 5 words
+    pub const REG_AMPS_CONFIG: u16 = 0x0014; // 1 word
+    pub const REG_STATUS_LONG: u16 = 0x002E; // 5 words
+    pub const REG_STATUS_AMPS: u16 = 0x0033; // 3 words
 
     pub const AMPS_DISABLED: u16 = 0x03E8; // 1000 = disabled / 100% duty cycle
 }
@@ -349,10 +355,42 @@ impl std::fmt::Display for Evcc2Firmware {
         writeln!(f, "Device ID: {}", self.device_id)?;
         writeln!(f, "Firmware Revision: V{}", self.firmware_revision)?;
         writeln!(f, "PCBA Version: {}", self.pcba_version)?;
-        writeln!(f, "Internal Current Sensor: {}", if self.current_sensor_present { "Present" } else { "Not installed" })?;
-        writeln!(f, "RDC-MD Sensor: {}", if self.rdc_md_enabled { "Enabled" } else { "Disabled" })?;
-        writeln!(f, "Contactor Welding Monitor: {}", if self.welding_detection_enabled { "Enabled" } else { "Disabled" })?;
-        write!(f, "Outlet State: {}", if self.outlet_enabled { "Enabled" } else { "Disabled" })
+        writeln!(
+            f,
+            "Internal Current Sensor: {}",
+            if self.current_sensor_present {
+                "Present"
+            } else {
+                "Not installed"
+            }
+        )?;
+        writeln!(
+            f,
+            "RDC-MD Sensor: {}",
+            if self.rdc_md_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        )?;
+        writeln!(
+            f,
+            "Contactor Welding Monitor: {}",
+            if self.welding_detection_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        )?;
+        write!(
+            f,
+            "Outlet State: {}",
+            if self.outlet_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        )
     }
 }
 
@@ -462,13 +500,37 @@ impl Evcc2SystemFlags {
 
 impl std::fmt::Display for Evcc2SystemFlags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Raw Flags: {:#06X} (State Pointer: {:#04X})", self.raw_flags, self.state_pointer)?;
+        writeln!(
+            f,
+            "Raw Flags: {:#06X} (State Pointer: {:#04X})",
+            self.raw_flags, self.state_pointer
+        )?;
         writeln!(f, "B1->B2 Transition Disabled: {}", self.b1_b2_disabled)?;
-        writeln!(f, "B1->B2 Disabled After Power-Cycle: {}", self.b1_b2_disabled_after_power_cycle)?;
-        writeln!(f, "Upstream Communication Lost: {}", self.upstream_comm_lost)?;
-        writeln!(f, "Load Imbalance Detected: {}", self.load_imbalance_detected)?;
-        writeln!(f, "Overtemperature (>60°C): {}", self.overtemperature_detected)?;
-        writeln!(f, "Phase Current Meter Fault: {}", self.phase_current_meter_fault)?;
+        writeln!(
+            f,
+            "B1->B2 Disabled After Power-Cycle: {}",
+            self.b1_b2_disabled_after_power_cycle
+        )?;
+        writeln!(
+            f,
+            "Upstream Communication Lost: {}",
+            self.upstream_comm_lost
+        )?;
+        writeln!(
+            f,
+            "Load Imbalance Detected: {}",
+            self.load_imbalance_detected
+        )?;
+        writeln!(
+            f,
+            "Overtemperature (>60°C): {}",
+            self.overtemperature_detected
+        )?;
+        writeln!(
+            f,
+            "Phase Current Meter Fault: {}",
+            self.phase_current_meter_fault
+        )?;
         writeln!(f, "E0->A1 Transition Disabled: {}", self.e0_a1_disabled)?;
         write!(f, "A1->B1 Transition Disabled: {}", self.a1_b1_disabled)
     }
@@ -517,20 +579,33 @@ impl Evcc2Measurements {
         let duty_cycle_permille = (duty_high << 8) | duty_low;
 
         // Configured current limit in Amperes: duty * 0.06
-        let configured_current_amperes = if duty_cycle_permille == evcc2_registers::AMPS_DISABLED || duty_cycle_permille == 0 {
-            0.0
-        } else {
-            (duty_cycle_permille as f32 * 0.06 * 10.0).round() / 10.0
-        };
+        let configured_current_amperes =
+            if duty_cycle_permille == evcc2_registers::AMPS_DISABLED || duty_cycle_permille == 0 {
+                0.0
+            } else {
+                (duty_cycle_permille as f32 * 0.06 * 10.0).round() / 10.0
+            };
 
         // Currents in 0.1A
         let raw_l1 = u16::from_be_bytes([payload[4], payload[5]]);
         let raw_l2 = u16::from_be_bytes([payload[6], payload[7]]);
         let raw_l3 = u16::from_be_bytes([payload[8], payload[9]]);
 
-        let l1 = if raw_l1 == 0x03E8 || raw_l1 == 1 { 0.0 } else { raw_l1 as f32 / 10.0 };
-        let l2 = if raw_l2 == 0x03E8 || raw_l2 == 1 { 0.0 } else { raw_l2 as f32 / 10.0 };
-        let l3 = if raw_l3 == 0x03E8 || raw_l3 == 1 { 0.0 } else { raw_l3 as f32 / 10.0 };
+        let l1 = if raw_l1 == 0x03E8 || raw_l1 == 1 {
+            0.0
+        } else {
+            raw_l1 as f32 / 10.0
+        };
+        let l2 = if raw_l2 == 0x03E8 || raw_l2 == 1 {
+            0.0
+        } else {
+            raw_l2 as f32 / 10.0
+        };
+        let l3 = if raw_l3 == 0x03E8 || raw_l3 == 1 {
+            0.0
+        } else {
+            raw_l3 as f32 / 10.0
+        };
 
         // Power in Watts at 230V per phase
         let total_power_watts = (l1 + l2 + l3) * 230.0;
@@ -554,8 +629,17 @@ impl Evcc2Measurements {
 impl std::fmt::Display for Evcc2Measurements {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Status: {}", self.status)?;
-        writeln!(f, "EV Connected: {}", if self.ev_connected { "Yes" } else { "No" })?;
-        writeln!(f, "Configured Current Limit: {:.1}A (Duty Cycle: {:.1}%)", self.configured_current_amperes, self.duty_cycle_permille as f32 / 10.0)?;
+        writeln!(
+            f,
+            "EV Connected: {}",
+            if self.ev_connected { "Yes" } else { "No" }
+        )?;
+        writeln!(
+            f,
+            "Configured Current Limit: {:.1}A (Duty Cycle: {:.1}%)",
+            self.configured_current_amperes,
+            self.duty_cycle_permille as f32 / 10.0
+        )?;
         writeln!(f, "Current L1: {:.1} A", self.current_l1_amperes)?;
         writeln!(f, "Current L2: {:.1} A", self.current_l2_amperes)?;
         writeln!(f, "Current L3: {:.1} A", self.current_l3_amperes)?;

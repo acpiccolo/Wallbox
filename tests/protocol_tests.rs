@@ -92,8 +92,14 @@ mod tests {
     #[test]
     fn test_evcc2_status_variants() {
         assert_eq!(Evcc2Status::from_raw(0xA1), Evcc2Status::WaitingForEv);
-        assert_eq!(Evcc2Status::from_raw(0xB1), Evcc2Status::EvAskingForCharging);
-        assert_eq!(Evcc2Status::from_raw(0xB2), Evcc2Status::EvPermissionToCharge);
+        assert_eq!(
+            Evcc2Status::from_raw(0xB1),
+            Evcc2Status::EvAskingForCharging
+        );
+        assert_eq!(
+            Evcc2Status::from_raw(0xB2),
+            Evcc2Status::EvPermissionToCharge
+        );
         assert_eq!(Evcc2Status::from_raw(0xC2), Evcc2Status::Charging);
         assert_eq!(Evcc2Status::from_raw(0xE0), Evcc2Status::OutletDisabled);
         assert_eq!(Evcc2Status::from_raw(0xF1), Evcc2Status::WeldingDetected);

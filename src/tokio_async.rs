@@ -8,7 +8,12 @@ use crate::protocol::{
     Evcc2Firmware, Evcc2Measurements, Evcc2ModbusSettings, Evcc2Status, Evcc2SystemFlags,
 };
 use anyhow::{bail, Context, Result};
-use std::{net::SocketAddr, pin::Pin, task::{Context as TaskContext, Poll}, time::Duration};
+use std::{
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context as TaskContext, Poll},
+    time::Duration,
+};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_serial::SerialStream;
@@ -66,26 +71,56 @@ pub struct AsyncAsciiClient {
     reader: BufReader<AsyncAsciiTransport>,
     slave_id: u8,
     delay: Duration,
+    timeout: Duration,
 }
 
 impl AsyncAsciiClient {
+    /// Create an asynchronous client directly from an opened asynchronous serial stream with specified `slave_id`.
+    pub fn from_serial(
+        stream: SerialStream,
+        slave_id: u8,
+        timeout: Duration,
+        delay: Duration,
+    ) -> Self {
+        Self {
+            reader: BufReader::new(AsyncAsciiTransport::Serial(stream)),
+            slave_id,
+            delay,
+            timeout,
+        }
+    }
+
+    /// Create an asynchronous client directly from an established asynchronous TCP stream with specified `slave_id`.
+    pub fn from_tcp(stream: TcpStream, slave_id: u8, timeout: Duration, delay: Duration) -> Self {
+        Self {
+            reader: BufReader::new(AsyncAsciiTransport::Tcp(stream)),
+            slave_id,
+            delay,
+            timeout,
+        }
+    }
+
     /// Connect via direct TCP to a transparent serial-to-ethernet server (e.g. `192.168.3.128:8899`).
-    pub async fn connect_tcp(
+    pub async fn connect_tcp(tcp_addr: &str, slave_id: u8, delay: Duration) -> Result<Self> {
+        Self::connect_tcp_timeout(tcp_addr, slave_id, Duration::from_secs(5), delay).await
+    }
+
+    /// Connect via direct TCP with explicit connect/read timeout.
+    pub async fn connect_tcp_timeout(
         tcp_addr: &str,
         slave_id: u8,
+        timeout: Duration,
         delay: Duration,
     ) -> Result<Self> {
         let socket_addr: SocketAddr = tcp_addr
             .parse()
             .with_context(|| format!("Cannot parse TCP socket address: {tcp_addr}"))?;
-        let stream = TcpStream::connect(&socket_addr).await
+        let stream = tokio::time::timeout(timeout, TcpStream::connect(&socket_addr))
+            .await
+            .with_context(|| format!("Connection timed out to async TCP server {tcp_addr}"))?
             .with_context(|| format!("Failed to connect to async TCP server {tcp_addr}"))?;
 
-        Ok(Self {
-            reader: BufReader::new(AsyncAsciiTransport::Tcp(stream)),
-            slave_id,
-            delay,
-        })
+        Ok(Self::from_tcp(stream, slave_id, timeout, delay))
     }
 
     /// Connect via asynchronous serial port (e.g. `/dev/ttyUSB0`, 38400 8E1).
@@ -97,6 +132,27 @@ impl AsyncAsciiClient {
         slave_id: u8,
         delay: Duration,
     ) -> Result<Self> {
+        Self::connect_serial_timeout(
+            device,
+            baud_rate,
+            parity,
+            stop_bits,
+            slave_id,
+            Duration::from_secs(5),
+            delay,
+        )
+    }
+
+    /// Connect via asynchronous serial port with explicit timeout.
+    pub fn connect_serial_timeout(
+        device: &str,
+        baud_rate: u32,
+        parity: tokio_serial::Parity,
+        stop_bits: tokio_serial::StopBits,
+        slave_id: u8,
+        timeout: Duration,
+        delay: Duration,
+    ) -> Result<Self> {
         let builder = tokio_serial::new(device, baud_rate)
             .parity(parity)
             .stop_bits(stop_bits)
@@ -104,30 +160,68 @@ impl AsyncAsciiClient {
         let stream = SerialStream::open(&builder)
             .with_context(|| format!("Failed to open async serial port {device}"))?;
 
-        Ok(Self {
-            reader: BufReader::new(AsyncAsciiTransport::Serial(stream)),
-            slave_id,
-            delay,
-        })
+        Ok(Self::from_serial(stream, slave_id, timeout, delay))
+    }
+
+    /// Returns the currently configured slave ID.
+    pub fn slave_id(&self) -> u8 {
+        self.slave_id
+    }
+
+    /// Updates the target slave ID for subsequent Modbus requests.
+    pub fn set_slave_id(&mut self, slave_id: u8) {
+        self.slave_id = slave_id;
+    }
+
+    /// Returns the currently configured inter-frame delay.
+    pub fn delay(&self) -> Duration {
+        self.delay
+    }
+
+    /// Sets the inter-frame delay duration.
+    pub fn set_delay(&mut self, delay: Duration) {
+        self.delay = delay;
+    }
+
+    /// Returns the current timeout.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// Sets the timeout duration for asynchronous Modbus transactions.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
+    /// Returns the remote peer address if connected via TCP.
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        match self.reader.get_ref() {
+            AsyncAsciiTransport::Tcp(t) => t.peer_addr().ok(),
+            AsyncAsciiTransport::Serial(_) => None,
+        }
     }
 
     /// Send a raw Modbus ASCII request and receive the verified response payload asynchronously.
-    pub async fn transaction(&mut self, function_code: u8, request_payload: &[u8]) -> Result<Vec<u8>> {
+    pub async fn transaction(
+        &mut self,
+        function_code: u8,
+        request_payload: &[u8],
+    ) -> Result<Vec<u8>> {
         let frame = encode_ascii_frame(self.slave_id, function_code, request_payload, ':');
         let transport = self.reader.get_mut();
-        transport
-            .write_all(frame.as_bytes())
+        tokio::time::timeout(self.timeout, transport.write_all(frame.as_bytes()))
             .await
+            .with_context(|| "Timeout writing async Modbus ASCII request")?
             .with_context(|| "Failed to write async Modbus ASCII request")?;
-        transport
-            .flush()
+        tokio::time::timeout(self.timeout, transport.flush())
             .await
+            .with_context(|| "Timeout flushing async Modbus ASCII stream")?
             .with_context(|| "Failed to flush async Modbus ASCII stream")?;
 
         let mut line = String::new();
-        self.reader
-            .read_line(&mut line)
+        tokio::time::timeout(self.timeout, self.reader.read_line(&mut line))
             .await
+            .with_context(|| "Timeout reading async Modbus ASCII response")?
             .with_context(|| "Failed to read async Modbus ASCII response")?;
 
         let (dev_id, fc, payload) = decode_ascii_frame(&line)
@@ -209,19 +303,25 @@ impl AsyncAsciiClient {
 
     /// Read firmware info asynchronously.
     pub async fn read_firmware(&mut self) -> Result<Evcc2Firmware> {
-        let bytes = self.read_holding_registers(evcc2_registers::REG_FIRMWARE, 2).await?;
+        let bytes = self
+            .read_holding_registers(evcc2_registers::REG_FIRMWARE, 2)
+            .await?;
         Evcc2Firmware::decode(&bytes).with_context(|| "Failed to parse EVCC2 firmware info")
     }
 
     /// Read Modbus settings asynchronously.
     pub async fn read_modbus_settings(&mut self) -> Result<Evcc2ModbusSettings> {
-        let bytes = self.read_holding_registers(evcc2_registers::REG_MODBUS_SETTINGS, 1).await?;
+        let bytes = self
+            .read_holding_registers(evcc2_registers::REG_MODBUS_SETTINGS, 1)
+            .await?;
         Evcc2ModbusSettings::decode(&bytes).with_context(|| "Failed to parse EVCC2 Modbus settings")
     }
 
     /// Read vehicle charging status asynchronously.
     pub async fn read_status(&mut self) -> Result<Evcc2Status> {
-        let bytes = self.read_holding_registers(evcc2_registers::REG_STATUS, 1).await?;
+        let bytes = self
+            .read_holding_registers(evcc2_registers::REG_STATUS, 1)
+            .await?;
         if bytes.len() < 2 {
             bail!("Invalid response length for status register");
         }
@@ -230,13 +330,17 @@ impl AsyncAsciiClient {
 
     /// Read system flags asynchronously.
     pub async fn read_system_flags(&mut self) -> Result<Evcc2SystemFlags> {
-        let bytes = self.read_holding_registers(evcc2_registers::REG_SYSTEM_FLAGS, 2).await?;
+        let bytes = self
+            .read_holding_registers(evcc2_registers::REG_SYSTEM_FLAGS, 2)
+            .await?;
         Evcc2SystemFlags::decode(&bytes).with_context(|| "Failed to parse EVCC2 system flags")
     }
 
     /// Read currently configured current limit asynchronously.
     pub async fn read_configured_current(&mut self) -> Result<(f32, u16)> {
-        let bytes = self.read_holding_registers(evcc2_registers::REG_AMPS_CONFIG, 1).await?;
+        let bytes = self
+            .read_holding_registers(evcc2_registers::REG_AMPS_CONFIG, 1)
+            .await?;
         if bytes.len() < 2 {
             bail!("Invalid response length for current configuration register");
         }
@@ -251,14 +355,17 @@ impl AsyncAsciiClient {
 
     /// Read measurements and 3-phase currents asynchronously.
     pub async fn read_measurements(&mut self) -> Result<Evcc2Measurements> {
-        let bytes = self.read_holding_registers(evcc2_registers::REG_STATUS_LONG, 5).await?;
+        let bytes = self
+            .read_holding_registers(evcc2_registers::REG_STATUS_LONG, 5)
+            .await?;
         Evcc2Measurements::decode(&bytes).with_context(|| "Failed to parse EVCC2 measurement data")
     }
 
     /// Set charging current limit asynchronously.
     pub async fn set_current(&mut self, amperes: u16) -> Result<()> {
         let duty = amperes_to_evcc2_duty_cycle(amperes);
-        self.write_multiple_registers(evcc2_registers::REG_AMPS_CONFIG, &[duty]).await
+        self.write_multiple_registers(evcc2_registers::REG_AMPS_CONFIG, &[duty])
+            .await
     }
 
     /// Enable charging asynchronously.
@@ -274,14 +381,17 @@ impl AsyncAsciiClient {
 
     /// Wake up vehicle asynchronously via Control Pilot sequence (E0 -> wait 3s -> A1).
     pub async fn wake_up(&mut self) -> Result<()> {
-        self.write_multiple_registers(evcc2_registers::REG_MODIFY_STATE, &[0xE0E0]).await?;
+        self.write_multiple_registers(evcc2_registers::REG_MODIFY_STATE, &[0xE0E0])
+            .await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
-        self.write_multiple_registers(evcc2_registers::REG_MODIFY_STATE, &[0xA1A1]).await?;
+        self.write_multiple_registers(evcc2_registers::REG_MODIFY_STATE, &[0xA1A1])
+            .await?;
         Ok(())
     }
 
     /// Reset charge controller asynchronously.
     pub async fn reset(&mut self) -> Result<()> {
-        self.write_multiple_registers(evcc2_registers::REG_MODIFY_STATE, &[0x5A5A]).await
+        self.write_multiple_registers(evcc2_registers::REG_MODIFY_STATE, &[0x5A5A])
+            .await
     }
 }

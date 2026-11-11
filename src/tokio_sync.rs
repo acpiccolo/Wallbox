@@ -58,12 +58,50 @@ impl std::io::Write for AsciiTransport {
 pub struct AsciiClient {
     reader: BufReader<AsciiTransport>,
     slave_id: u8,
-    _timeout: Duration,
+    timeout: Duration,
     delay: Duration,
 }
 
 impl AsciiClient {
-    /// Connect via serial device (e.g. `/dev/ttyUSB0`, default 38400 8E1).
+    /// Create a client directly from an opened serial port with specified `slave_id`.
+    pub fn from_serial(
+        mut port: Box<dyn tokio_serial::SerialPort>,
+        slave_id: u8,
+        timeout: Duration,
+        delay: Duration,
+    ) -> Result<Self> {
+        port.set_timeout(timeout)
+            .with_context(|| "Failed to set serial port timeout")?;
+        Ok(Self {
+            reader: BufReader::new(AsciiTransport::Serial(port)),
+            slave_id,
+            timeout,
+            delay,
+        })
+    }
+
+    /// Create a client directly from an established TCP stream with specified `slave_id`.
+    pub fn from_tcp(
+        stream: TcpStream,
+        slave_id: u8,
+        timeout: Duration,
+        delay: Duration,
+    ) -> Result<Self> {
+        stream
+            .set_read_timeout(Some(timeout))
+            .with_context(|| "Failed to set TCP read timeout")?;
+        stream
+            .set_write_timeout(Some(timeout))
+            .with_context(|| "Failed to set TCP write timeout")?;
+        Ok(Self {
+            reader: BufReader::new(AsciiTransport::Tcp(stream)),
+            slave_id,
+            timeout,
+            delay,
+        })
+    }
+
+    /// Connect via serial device path (e.g. `/dev/ttyUSB0`, default 38400 8E1).
     pub fn connect_serial(
         device: &str,
         baud_rate: u32,
@@ -82,12 +120,7 @@ impl AsciiClient {
             .open()
             .with_context(|| format!("Failed to open serial device {device}"))?;
 
-        Ok(Self {
-            reader: BufReader::new(AsciiTransport::Serial(port)),
-            slave_id,
-            _timeout: timeout,
-            delay,
-        })
+        Self::from_serial(port, slave_id, timeout, delay)
     }
 
     /// Connect via TCP (e.g. to serial-to-ethernet bridge like Elfin EW11 at `192.168.3.128:8899`).
@@ -104,15 +137,75 @@ impl AsciiClient {
 
         let stream = TcpStream::connect_timeout(&socket_addr, timeout)
             .with_context(|| format!("Failed to connect to TCP server {tcp_addr}"))?;
-        stream.set_read_timeout(Some(timeout))?;
-        stream.set_write_timeout(Some(timeout))?;
 
-        Ok(Self {
-            reader: BufReader::new(AsciiTransport::Tcp(stream)),
-            slave_id,
-            _timeout: timeout,
-            delay,
-        })
+        Self::from_tcp(stream, slave_id, timeout, delay)
+    }
+
+    /// Returns the currently configured slave ID.
+    pub fn slave_id(&self) -> u8 {
+        self.slave_id
+    }
+
+    /// Updates the target slave ID for subsequent Modbus requests.
+    pub fn set_slave_id(&mut self, slave_id: u8) {
+        self.slave_id = slave_id;
+    }
+
+    /// Returns the currently configured inter-frame delay.
+    pub fn delay(&self) -> Duration {
+        self.delay
+    }
+
+    /// Sets the inter-frame delay duration.
+    pub fn set_delay(&mut self, delay: Duration) {
+        self.delay = delay;
+    }
+
+    /// Returns the current timeout.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// Updates the timeout on the underlying transport.
+    pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
+        self.timeout = timeout;
+        match self.reader.get_mut() {
+            AsciiTransport::Serial(s) => {
+                s.set_timeout(timeout)
+                    .with_context(|| "Failed to update serial timeout")?;
+            }
+            AsciiTransport::Tcp(t) => {
+                t.set_read_timeout(Some(timeout))
+                    .with_context(|| "Failed to update TCP read timeout")?;
+                t.set_write_timeout(Some(timeout))
+                    .with_context(|| "Failed to update TCP write timeout")?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns the remote peer address if connected via TCP.
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        match self.reader.get_ref() {
+            AsciiTransport::Tcp(t) => t.peer_addr().ok(),
+            AsciiTransport::Serial(_) => None,
+        }
+    }
+
+    /// Returns the serial port name if connected via serial port.
+    pub fn port_name(&self) -> Option<String> {
+        match self.reader.get_ref() {
+            AsciiTransport::Serial(s) => s.name(),
+            AsciiTransport::Tcp(_) => None,
+        }
+    }
+
+    /// Returns the baud rate if connected via serial port.
+    pub fn baud_rate(&self) -> Option<u32> {
+        match self.reader.get_ref() {
+            AsciiTransport::Serial(s) => s.baud_rate().ok(),
+            AsciiTransport::Tcp(_) => None,
+        }
     }
 
     /// Send a raw Modbus ASCII request and receive the verified response payload.
@@ -129,9 +222,9 @@ impl AsciiClient {
             .with_context(|| "Failed to flush Modbus ASCII stream")?;
 
         let mut line = String::new();
-        self.reader
-            .read_line(&mut line)
-            .with_context(|| "Failed to read Modbus ASCII response (timed out or connection closed)")?;
+        self.reader.read_line(&mut line).with_context(|| {
+            "Failed to read Modbus ASCII response (timed out or connection closed)"
+        })?;
 
         trace!("Modbus ASCII recv: {:?}", line.trim());
         let (dev_id, fc, payload) = decode_ascii_frame(&line)
@@ -271,15 +364,13 @@ impl AsciiClient {
     /// Read Modbus communication settings (Register 0x0003, 1 word).
     pub fn read_modbus_settings(&mut self) -> Result<Evcc2ModbusSettings> {
         let bytes = self.read_holding_registers(evcc2_registers::REG_MODBUS_SETTINGS, 1)?;
-        Evcc2ModbusSettings::decode(&bytes)
-            .with_context(|| "Failed to parse EVCC2 Modbus settings")
+        Evcc2ModbusSettings::decode(&bytes).with_context(|| "Failed to parse EVCC2 Modbus settings")
     }
 
     /// Read system flags and state machine pointer (Register 0x0006, 2 words).
     pub fn read_system_flags(&mut self) -> Result<Evcc2SystemFlags> {
         let bytes = self.read_holding_registers(evcc2_registers::REG_SYSTEM_FLAGS, 2)?;
-        Evcc2SystemFlags::decode(&bytes)
-            .with_context(|| "Failed to parse EVCC2 system flags")
+        Evcc2SystemFlags::decode(&bytes).with_context(|| "Failed to parse EVCC2 system flags")
     }
 
     /// Reset wallbox charge controller (Register 0x0005, value 0x5A5A).

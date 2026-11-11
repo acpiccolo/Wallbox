@@ -15,7 +15,10 @@ pub enum Error {
 
     /// An exception response was returned by the slave device.
     #[error("Modbus exception response: function code {function_code:#04X}, exception code {exception_code:#04X}")]
-    ExceptionResponse { function_code: u8, exception_code: u8 },
+    ExceptionResponse {
+        function_code: u8,
+        exception_code: u8,
+    },
 
     /// The provided Device ID is outside permissible range (1..=16).
     #[error("Device ID {0} is out of permissible range (1..=16)")]

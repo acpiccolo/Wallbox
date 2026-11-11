@@ -51,17 +51,20 @@ impl fmt::Debug for MqttConfig {
         f.debug_struct("MqttConfig")
             .field("uri", &self.uri)
             .field("username", &self.username)
-            .field(
-                "password",
-                &self.password.as_ref().map(|_| "********"),
-            )
+            .field("password", &self.password.as_ref().map(|_| "********"))
             .field("topic", &self.topic)
             .field("qos", &self.qos)
             .field("client_id", &self.client_id)
             .field("operation_timeout", &self.operation_timeout)
             .field("keep_alive_interval", &self.keep_alive_interval)
-            .field("auto_reconnect_interval_min", &self.auto_reconnect_interval_min)
-            .field("auto_reconnect_interval_max", &self.auto_reconnect_interval_max)
+            .field(
+                "auto_reconnect_interval_min",
+                &self.auto_reconnect_interval_min,
+            )
+            .field(
+                "auto_reconnect_interval_max",
+                &self.auto_reconnect_interval_max,
+            )
             .finish()
     }
 }
@@ -114,8 +117,9 @@ impl MqttConfig {
         log::debug!("Loading config file from {:?}", config_file_path);
         let config_file = std::fs::File::open(config_file_path)
             .with_context(|| format!("Cannot open MQTT config file {:?}", config_file_path))?;
-        let mut config: Self = yaml_serde::from_reader(&config_file)
-            .with_context(|| format!("Cannot read MQTT config from file: {:?}", config_file_path))?;
+        let mut config: Self = yaml_serde::from_reader(&config_file).with_context(|| {
+            format!("Cannot read MQTT config from file: {:?}", config_file_path)
+        })?;
 
         // Override settings with environment variables if set
         if let Ok(env_uri) = std::env::var("MQTT_URI") {
@@ -231,7 +235,8 @@ impl MqttPublisher {
             let rx = client.start_consuming();
             let sub_topic = format!("{}/set/#", config.topic);
             log::info!("Subscribing to command topic: {sub_topic}");
-            client.subscribe(&sub_topic, config.qos)
+            client
+                .subscribe(&sub_topic, config.qos)
                 .with_context(|| format!("Failed to subscribe to {sub_topic}"))?;
             Some(rx)
         } else {
@@ -301,7 +306,11 @@ impl MqttPublisher {
                                 amps = self.max_current;
                             }
                             if amps == 0 || (6..=80).contains(&amps) {
-                                log::info!("Applying MQTT power setting: {}W -> {}A per phase", watts, amps);
+                                log::info!(
+                                    "Applying MQTT power setting: {}W -> {}A per phase",
+                                    watts,
+                                    amps
+                                );
                                 if let Err(e) = wallbox.set_current(amps) {
                                     log::error!("Failed to set power via MQTT: {e}");
                                 }
@@ -365,7 +374,9 @@ impl MqttPublisher {
     ) -> Result<()> {
         if !self.client.is_connected() {
             if !self.was_disconnected.swap(true, Ordering::SeqCst) {
-                log::warn!("MQTT connection lost! Automatic reconnect is active in the background...");
+                log::warn!(
+                    "MQTT connection lost! Automatic reconnect is active in the background..."
+                );
             }
             return Ok(());
         }
@@ -404,11 +415,7 @@ impl MqttPublisher {
 
         if !no_json {
             let payload = serde_json::to_string(meas)?;
-            let msg = paho_mqtt::Message::new(
-                format!("{}/JSON", self.topic),
-                payload,
-                self.qos,
-            );
+            let msg = paho_mqtt::Message::new(format!("{}/JSON", self.topic), payload, self.qos);
             self.client
                 .publish(msg)
                 .with_context(|| "Cannot publish MQTT message")?;

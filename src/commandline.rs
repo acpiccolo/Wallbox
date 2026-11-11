@@ -25,7 +25,9 @@ pub fn parse_current(s: &str) -> Result<u16, String> {
     if val == 0 || (6..=80).contains(&val) {
         Ok(val)
     } else {
-        Err(format!("Current must be 0 (stop) or between 6A and 80A, got {val}"))
+        Err(format!(
+            "Current must be 0 (stop) or between 6A and 80A, got {val}"
+        ))
     }
 }
 
@@ -37,9 +39,13 @@ fn default_device_name() -> String {
     }
 }
 
-#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ParityAndStopBit {
-    #[value(name = "ep1b", help = "even parity, one stop bit (default for ABL eMH1 8E1)")]
+    #[value(
+        name = "ep1b",
+        help = "even parity, one stop bit (default for ABL eMH1 8E1)"
+    )]
+    #[default]
     EvenParityOneStopBit,
     #[value(name = "np1b", help = "no parity, one stop bit")]
     NoParityOneStopBit,
@@ -47,12 +53,6 @@ pub enum ParityAndStopBit {
     OddParityOneStopBit,
     #[value(name = "np2b", help = "no parity, two stop bits")]
     NoParityTwoStopBits,
-}
-
-impl Default for ParityAndStopBit {
-    fn default() -> Self {
-        Self::EvenParityOneStopBit
-    }
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]

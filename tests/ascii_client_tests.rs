@@ -1,9 +1,6 @@
 #[cfg(all(test, feature = "tokio-sync"))]
 mod ascii_client_mock_tests {
-    use abl_evcc_lib::{
-        protocol::Evcc2Status,
-        tokio_sync::AsciiClient,
-    };
+    use abl_evcc_lib::{protocol::Evcc2Status, tokio_sync::AsciiClient};
     use std::{
         io::{BufRead, BufReader, Write},
         net::TcpListener,
@@ -24,10 +21,50 @@ mod ascii_client_mock_tests {
             1,
             Duration::from_secs(1),
             Duration::from_millis(10),
-        ).unwrap();
+        )
+        .unwrap();
 
         let debug_str = format!("{:?}", client);
         assert!(debug_str.contains("AsciiClient"));
+    }
+
+    #[test]
+    fn test_ascii_client_from_tcp_and_setters() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(socket.try_clone().unwrap());
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            let _ = socket.write_all(b">02030200A158\r\n");
+            let _ = socket.flush();
+        });
+
+        let stream = std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        let mut client = AsciiClient::from_tcp(
+            stream,
+            1,
+            Duration::from_millis(500),
+            Duration::from_millis(20),
+        )
+        .unwrap();
+
+        assert_eq!(client.slave_id(), 1);
+        assert_eq!(client.delay(), Duration::from_millis(20));
+        assert_eq!(client.timeout(), Duration::from_millis(500));
+        assert!(client.peer_addr().is_some());
+
+        // Test setters
+        client.set_slave_id(2);
+        assert_eq!(client.slave_id(), 2);
+        client.set_delay(Duration::from_millis(50));
+        assert_eq!(client.delay(), Duration::from_millis(50));
+        client.set_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(client.timeout(), Duration::from_secs(1));
+
+        let status = client.read_status().unwrap();
+        assert_eq!(status, Evcc2Status::WaitingForEv);
     }
 
     #[test]
@@ -53,7 +90,9 @@ mod ascii_client_mock_tests {
             line.clear();
             reader.read_line(&mut line).unwrap();
             assert!(line.contains("0103002E0005"));
-            socket.write_all(b">01030A2EA1110B03E803E803E846\r\n").unwrap();
+            socket
+                .write_all(b">01030A2EA1110B03E803E803E846\r\n")
+                .unwrap();
             socket.flush().unwrap();
         });
 
@@ -62,7 +101,8 @@ mod ascii_client_mock_tests {
             1,
             Duration::from_secs(2),
             Duration::from_millis(10),
-        ).unwrap();
+        )
+        .unwrap();
 
         let status = client.read_status().unwrap();
         assert_eq!(status, Evcc2Status::WaitingForEv);

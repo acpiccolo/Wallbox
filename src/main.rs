@@ -169,7 +169,9 @@ fn handle_commands(
         commandline::Commands::SetPower { watts, force } => {
             let amps = proto::power_watts_to_amperes(*watts);
             if amps == 0 && !force {
-                eprintln!("Warning: Setting charging power to 0W will immediately halt active charging.");
+                eprintln!(
+                    "Warning: Setting charging power to 0W will immediately halt active charging."
+                );
                 eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
@@ -242,7 +244,9 @@ fn handle_commands(
         commandline::Commands::Reset { force } => {
             if !force {
                 eprintln!("CRITICAL WARNING: Resetting the wallbox charge controller may interrupt active charging sessions!");
-                eprintln!("Pass --force to skip confirmation. Are you sure you want to proceed? [y/N]");
+                eprintln!(
+                    "Pass --force to skip confirmation. Are you sure you want to proceed? [y/N]"
+                );
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
                 if !input.trim().eq_ignore_ascii_case("y") {
@@ -259,7 +263,10 @@ fn handle_commands(
         commandline::Commands::Enable { amperes, power } => {
             let amps = if let Some(p) = power {
                 let converted = proto::power_watts_to_amperes(*p);
-                println!("Converted power {}W (3-phase) to {}A per phase.", p, converted);
+                println!(
+                    "Converted power {}W (3-phase) to {}A per phase.",
+                    p, converted
+                );
                 converted
             } else {
                 *amperes
@@ -271,7 +278,9 @@ fn handle_commands(
         }
         commandline::Commands::Disable { force } => {
             if !force {
-                eprintln!("Warning: Disabling charging will cut power and stop the charging session!");
+                eprintln!(
+                    "Warning: Disabling charging will cut power and stop the charging session!"
+                );
                 eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
@@ -312,10 +321,16 @@ mod tests {
 
         // Fallback test
         let low_delay = Duration::from_millis(1);
-        assert_eq!(check_serial_delay(low_delay, 9600), Duration::from_millis(4));
+        assert_eq!(
+            check_serial_delay(low_delay, 9600),
+            Duration::from_millis(4)
+        );
 
         let good_delay = Duration::from_millis(50);
-        assert_eq!(check_serial_delay(good_delay, 38400), Duration::from_millis(50));
+        assert_eq!(
+            check_serial_delay(good_delay, 38400),
+            Duration::from_millis(50)
+        );
     }
 }
 
@@ -369,8 +384,7 @@ fn main() -> Result<()> {
             command,
         } => {
             trace!("Open TCP {address} slave {slave}");
-            let mut client =
-                AsciiClient::connect_tcp(address, *slave, args.timeout, delay)?;
+            let mut client = AsciiClient::connect_tcp(address, *slave, args.timeout, delay)?;
             handle_commands(&mut client, command, delay, args.no_json)?;
         }
     }
