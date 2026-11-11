@@ -19,7 +19,6 @@ required-features = ["bin-dependencies"]
 default = ["bin-dependencies"]
 bin-dependencies = [
     "serde",
-    "safe-client-sync",
     "tokio-sync",
     "clap/derive",
     "dep:clap-verbosity-flag",
@@ -34,9 +33,7 @@ bin-dependencies = [
 ]
 serde = ["dep:serde"]
 tokio-sync = []
-safe-client-sync = ["tokio-sync"]
 tokio-async = ["tokio/io-util", "tokio/net", "tokio/time"]
-safe-client-async = ["tokio-async"]
 
 [dependencies]
 thiserror = "2"

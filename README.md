@@ -204,29 +204,24 @@ In `mqtt.yaml`, `max_current` (default: `1`) defines the **maximum charging curr
 
 ## Library Usage
 
-The `abl_evcc_lib` crate provides two main ways to interact with the ABL eMH1 energy/charge controllers:
+The `abl_evcc_lib` crate provides synchronous and asynchronous Modbus ASCII clients for the ABL eMH1 wallbox:
 
-1. **High-Level, Safe Clients**: Stateful, thread-safe clients that are easy to share and use in concurrent applications. This is the recommended approach for most users. See `tokio_sync_safe_client::SafeClient` (blocking) and `tokio_async_safe_client::SafeClient` (`async`).
+- **Synchronous Client**: [`tokio_sync::AsciiClient`] for blocking applications (serial ports or direct TCP).
+- **Asynchronous Client**: [`tokio_async::AsyncAsciiClient`] for async/await Tokio applications (serial ports or direct TCP).
 
-2. **Low-Level, Stateless Functions**: A set of stateless functions that directly map to the device's Modbus commands. This API offers maximum flexibility but requires manual management of the Modbus context. See the `tokio_sync` and `tokio_async` modules.
-
-### Quick Start: Synchronous Safe Client
+### Quick Start: Synchronous Client
 
 ```rust
-use abl_evcc_lib::{
-    tokio_sync::AsciiClient,
-    tokio_sync_safe_client::SafeClient,
-};
+use abl_evcc_lib::tokio_sync::AsciiClient;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect directly to a transparent TCP serial server (e.g. Elfin EW11)
-    let ascii_client = AsciiClient::connect_tcp("192.168.3.128:8899", 1, Duration::from_secs(3), Duration::from_millis(100))?;
-    let mut client = SafeClient::new(ascii_client);
+    // Connect directly to a transparent TCP serial server
+    let mut client = AsciiClient::connect_tcp("192.168.3.128:8899", 1, Duration::from_secs(3), Duration::from_millis(100))?;
 
     // Read full measurements (status, 3-phase currents, active power, current limit)
     let measurements = client.read_measurements()?;
-    println!("Successfully read measurements:\n{}", measurements);
+    println!("Measurements:\n{}", measurements);
 
     // Set maximum charging current to 16A per phase
     client.set_current(16)?;
@@ -235,21 +230,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Quick Start: Asynchronous Safe Client (TCP and Serial)
+### Quick Start: Asynchronous Client (TCP and Serial)
 
 ```rust
-use abl_evcc_lib::tokio_async_safe_client::SafeClient;
+use abl_evcc_lib::tokio_async::AsyncAsciiClient;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Via direct TCP:
-    let mut tcp_client = SafeClient::connect_tcp("192.168.3.128:8899", 1, Duration::from_millis(100)).await?;
+    // Connect via direct TCP:
+    let mut tcp_client = AsyncAsciiClient::connect_tcp("192.168.3.128:8899", 1, Duration::from_millis(100)).await?;
     let measurements = tcp_client.read_measurements().await?;
-    println!("Async TCP read status: {:?}", measurements.status);
+    println!("Async TCP status: {:?}", measurements.status);
 
-    // Or via asynchronous serial port (/dev/ttyUSB0):
-    // let mut serial_client = SafeClient::connect_serial(
+    // Or connect via asynchronous serial port (/dev/ttyUSB0):
+    // let mut serial_client = AsyncAsciiClient::connect_serial(
     //     "/dev/ttyUSB0", 38400, tokio_serial::Parity::Even, tokio_serial::StopBits::One, 1, Duration::from_millis(100),
     // )?;
 
@@ -264,10 +259,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 This crate uses a feature-based system to minimize dependencies:
 
 - **`default`**: Enables `bin-dependencies` for compiling the `abl-evcc` CLI tool.
-- **`safe-client-sync`**: Thread-safe synchronous wrapper [`tokio_sync_safe_client::SafeClient`].
-- **`safe-client-async`**: Thread-safe asynchronous wrapper [`tokio_async_safe_client::SafeClient`].
-- **`tokio-sync`**: Stateless synchronous functions [`tokio_sync::Evcc2`].
-- **`tokio-async`**: Stateless asynchronous functions [`tokio_async::Evcc2Async`].
+- **`tokio-sync`**: Synchronous client [`tokio_sync::AsciiClient`].
+- **`tokio-async`**: Asynchronous client [`tokio_async::AsyncAsciiClient`] using Tokio.
 - **`serde`**: Implements serialization/deserialization for protocol data types.
 
 ---

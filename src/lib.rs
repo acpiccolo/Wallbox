@@ -1,14 +1,10 @@
 //! A library for controlling ABL eMH1 / eMH2 series wallboxes via Modbus ASCII.
 //!
-//! This crate provides two main ways to interact with the ABL eMH1 charge controller (EVCC2/3):
+//! This crate provides clients and protocol implementations for communicating with
+//! ABL eMH1 / eMH2 (EVCC2/3) wallboxes over Modbus ASCII:
 //!
-//! 1. **High-Level, Safe Clients**: Stateful, thread-safe clients that are easy to share and use
-//!    in concurrent applications. This is the recommended approach for most users. See
-//!    [`tokio_sync_safe_client::SafeClient`] (blocking) and [`tokio_async_safe_client::SafeClient`] (`async`).
-//!
-//! 2. **Low-Level, Stateless Functions**: A set of stateless functions that directly map to the
-//!    device's Modbus ASCII commands. This API offers maximum flexibility but requires manual management
-//!    of the underlying context. See the [`tokio_sync`] and [`tokio_async`] modules.
+//! - [`tokio_sync::AsciiClient`]: Synchronous client for serial and direct TCP connections.
+//! - [`tokio_async::AsyncAsciiClient`]: Asynchronous client for serial and direct TCP connections.
 
 /// Contains error types for the library.
 mod error;
@@ -19,15 +15,13 @@ pub use error::Error;
 #[cfg(feature = "tokio-sync")]
 pub mod tokio_sync;
 
-#[cfg(feature = "safe-client-sync")]
-pub mod tokio_sync_safe_client;
-
 #[cfg(feature = "tokio-async")]
 pub mod tokio_async;
 
-#[cfg(feature = "safe-client-async")]
-pub mod tokio_async_safe_client;
-
 #[cfg(feature = "tokio-sync")]
-pub use tokio_sync::{AsciiClient, Evcc2};
+pub use tokio_sync::AsciiClient;
+
+#[cfg(feature = "tokio-async")]
+pub use tokio_async::AsyncAsciiClient;
+
 pub use protocol::*;

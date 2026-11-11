@@ -1,9 +1,8 @@
-#[cfg(all(test, feature = "safe-client-sync"))]
-mod safe_client_tests {
+#[cfg(all(test, feature = "tokio-async"))]
+mod async_client_tests {
     use abl_evcc_lib::{
         protocol::Evcc2Status,
-        tokio_sync::AsciiClient,
-        tokio_sync_safe_client::SafeClient,
+        tokio_async::AsyncAsciiClient,
     };
     use std::{
         io::{BufRead, BufReader, Write},
@@ -12,8 +11,26 @@ mod safe_client_tests {
         time::Duration,
     };
 
-    #[test]
-    fn test_sync_safe_client() {
+    #[tokio::test]
+    async fn test_async_client_debug() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _server = thread::spawn(move || {
+            let _ = listener.accept();
+        });
+
+        let client = AsyncAsciiClient::connect_tcp(
+            &format!("127.0.0.1:{}", port),
+            1,
+            Duration::from_millis(10),
+        ).await.unwrap();
+
+        let debug_str = format!("{:?}", client);
+        assert!(debug_str.contains("AsyncAsciiClient"));
+    }
+
+    #[tokio::test]
+    async fn test_async_ascii_client_tcp() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
 
@@ -34,19 +51,16 @@ mod safe_client_tests {
             socket.flush().unwrap();
         });
 
-        let ascii = AsciiClient::connect_tcp(
+        let mut client = AsyncAsciiClient::connect_tcp(
             &format!("127.0.0.1:{}", port),
             1,
-            Duration::from_secs(2),
             Duration::from_millis(10),
-        ).unwrap();
+        ).await.unwrap();
 
-        let mut client = SafeClient::new(ascii);
-
-        let status = client.read_status().unwrap();
+        let status = client.read_status().await.unwrap();
         assert_eq!(status, Evcc2Status::WaitingForEv);
 
-        let meas = client.read_measurements().unwrap();
+        let meas = client.read_measurements().await.unwrap();
         assert_eq!(meas.status, Evcc2Status::WaitingForEv);
         assert!((meas.configured_current_amperes - 16.0).abs() < 0.1);
     }
