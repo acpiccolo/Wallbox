@@ -1,29 +1,27 @@
+//! A library for controlling ABL eMH1 / eMH2 series wallboxes via Modbus ASCII.
+//!
+//! This crate provides clients and protocol implementations for communicating with
+//! ABL eMH1 / eMH2 (EVCC2/3) wallboxes over Modbus ASCII:
+//!
+//! - [`tokio_sync::AsciiClient`]: Synchronous client for serial and direct TCP connections.
+//! - [`tokio_async::AsyncAsciiClient`]: Asynchronous client for serial and direct TCP connections.
+
+/// Contains error types for the library.
+mod error;
 pub mod protocol;
 
-#[cfg(any(
-    feature = "tokio-rtu-sync",
-    feature = "tokio-tcp-sync",
-    feature = "tokio-rtu",
-    feature = "tokio-tcp"
-))]
-pub mod tokio_common;
+pub use error::Error;
 
-#[cfg(any(feature = "tokio-rtu-sync", feature = "tokio-tcp-sync"))]
+#[cfg(feature = "tokio-sync")]
 pub mod tokio_sync;
 
-#[cfg(all(
-    feature = "safe-client-sync",
-    any(feature = "tokio-rtu-sync", feature = "tokio-tcp-sync")
-))]
-pub mod tokio_sync_safe_client;
-
-#[cfg(any(feature = "tokio-rtu", feature = "tokio-tcp"))]
+#[cfg(feature = "tokio-async")]
 pub mod tokio_async;
 
-#[cfg(all(
-    feature = "safe-client-async",
-    any(feature = "tokio-rtu", feature = "tokio-tcp")
-))]
-pub mod tokio_async_safe_client;
+#[cfg(feature = "tokio-sync")]
+pub use tokio_sync::AsciiClient;
+
+#[cfg(feature = "tokio-async")]
+pub use tokio_async::AsyncAsciiClient;
 
 pub use protocol::*;

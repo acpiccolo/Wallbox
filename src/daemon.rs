@@ -1,6 +1,6 @@
+use abl_evcc_lib::tokio_sync::AsciiClient;
 use anyhow::Result;
 use log::{error, info, warn};
-use abl_evcc_lib::tokio_sync_safe_client::SafeClient;
 use std::{
     sync::{Arc, Condvar, Mutex},
     time::Duration,
@@ -9,7 +9,7 @@ use std::{
 use crate::{commandline, mqtt};
 
 pub fn run(
-    client: &mut SafeClient,
+    client: &mut AsciiClient,
     output: commandline::DaemonOutput,
     interval: Duration,
     no_json: bool,
@@ -20,6 +20,8 @@ pub fn run(
         }
         commandline::DaemonOutput::Console => None,
     };
+
+    let firmware = client.read_firmware().ok();
 
     let shutdown_pair = Arc::new((Mutex::new(false), Condvar::new()));
 
@@ -47,27 +49,38 @@ pub fn run(
             }
         }
 
-        match client.read_all(&interval) {
-            Ok(values) => match &output {
+        // If MQTT control is active, handle any incoming commands before reading measurements
+        if let Some(publisher) = &mqtt_publisher {
+            if publisher.allow_control() {
+                if let Err(e) = publisher.check_incoming_messages(client) {
+                    error!("Error handling incoming MQTT messages: {e}");
+                }
+            }
+        }
+
+        match client.read_measurements() {
+            Ok(meas) => match &output {
                 commandline::DaemonOutput::Console => {
                     if no_json {
-                        println!("{values}");
-                    } else if let Ok(json) = serde_json::to_string_pretty(&values) {
+                        println!("{meas}");
+                    } else if let Ok(json) = serde_json::to_string_pretty(&meas) {
                         println!("{json}");
                     } else {
-                        error!("Failed to serialize values to JSON");
+                        error!("Failed to serialize measurements to JSON");
                     }
                 }
                 commandline::DaemonOutput::Mqtt { .. } => {
                     if let Some(publisher) = &mqtt_publisher {
-                        if let Err(e) = publisher.publish_values(&values, no_json) {
-                            error!("Failed to publish values to MQTT: {e}");
+                        if let Err(e) =
+                            publisher.publish_measurements(&meas, firmware.as_ref(), no_json)
+                        {
+                            error!("Failed to publish measurements to MQTT: {e}");
                         }
                     }
                 }
             },
             Err(e) => {
-                error!("Error reading values from device: {e}");
+                error!("Error reading measurements from EVCC2/3 device: {e}");
             }
         }
 
@@ -83,6 +96,6 @@ pub fn run(
         publisher.disconnect();
     }
 
-    info!("Daemon stopped cleanly.");
+    info!("Modbus ASCII Daemon stopped cleanly.");
     Ok(())
 }

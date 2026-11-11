@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/acpiccolo/ABL-EVCC-Wallbox"
-description = "ABL EVCC2/3 wallbox protocol and commandline tool"
+description = "ABL eMH1 / eMH2 (EVCC2/3) wallbox Modbus ASCII communication tool and library"
 
 [lib]
 name = "abl_evcc_lib"
@@ -18,19 +18,12 @@ required-features = ["bin-dependencies"]
 [features]
 default = ["bin-dependencies"]
 bin-dependencies = [
-    "safe-client-sync",
-    "safe-client-async",
-    "tokio-rtu-sync",
-    "tokio-tcp-sync",
     "serde",
+    "tokio-sync",
     "clap/derive",
-    "dep:anyhow",
-    "dep:log",
-    "dep:tokio-serial",
     "dep:clap-verbosity-flag",
     "dep:flexi_logger",
     "dep:humantime",
-    "dep:dialoguer",
     "dep:paho-mqtt",
     "dep:serde_json",
     "dep:yaml_serde",
@@ -38,34 +31,15 @@ bin-dependencies = [
     "dep:humantime-serde",
     "dep:ctrlc",
 ]
-tokio-rtu-sync = ["tokio-modbus/rtu-sync", "dep:tokio-serial", "dep:paste"]
-tokio-rtu = ["tokio/time", "tokio-modbus/rtu", "dep:tokio-serial", "dep:paste"]
-tokio-tcp-sync = [
-    "tokio/net",
-    "tokio-modbus/tcp-sync",
-    "dep:tokio-serial",
-    "dep:paste",
-]
-tokio-tcp = [
-    "tokio/time",
-    "tokio/net",
-    "tokio-modbus/tcp",
-    "dep:tokio-serial",
-    "dep:paste",
-]
 serde = ["dep:serde"]
-safe-client-sync = []
-safe-client-async = []
+tokio-sync = []
+tokio-async = ["tokio/io-util", "tokio/net", "tokio/time"]
 
 [dependencies]
 thiserror = "2"
-tokio-modbus = { version = "0.17", default-features = false, optional = true }
-tokio-serial = { version = "5", optional = true }
-tokio = { version = "1", features = ["sync", "time", "net"], default-features = false, optional = true }
-paste = { version = "1", optional = true }
-# Requirements for bin
-anyhow = { version = "1", optional = true }
-log = { version = "0.4", optional = true }
+tokio-serial = "5"
+anyhow = "1"
+log = "0.4"
 clap = { version = "4", optional = true }
 clap-verbosity-flag = { version = "3", optional = true }
 flexi_logger = { version = "0.31", optional = true }
@@ -76,8 +50,8 @@ serde = { version = "1", features = ["derive"], optional = true }
 yaml_serde = { version = "0.10", optional = true }
 rand = { version = "0.10", optional = true }
 humantime-serde = { version = "1", optional = true }
-dialoguer = { version = "0.12", optional = true }
 ctrlc = { version = "3.4", optional = true }
+tokio = { version = "1", features = ["sync"], default-features = false, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

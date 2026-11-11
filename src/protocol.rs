@@ -1,48 +1,7 @@
-//! This module defines the core data structures, protocol framing, and traits for the EVCC1 Modbus protocol.
-//!
-//! Registers (decimal):
-//! - 256 (0x0100): Charging status (Vehicle status) - ASCII values, e.g. 65 ('A' = Standby/Ready), 66 ('B' = Connected), 67 ('C' = Charging)
-//! - 257 (0x0101): Maximum charging current (Setpoint/Status) - Read/Write holding register in Amperes (e.g. 16 = 16A, 0 = Disabled)
-//! - 258 (0x0102): Active charging power / current (Read Holding)
+//! This module defines the core data structures, protocol framing, and register mappings
+//! for ABL eMH1 / eMH2 (EVCC2/3) wallboxes using Modbus ASCII.
 
-/// Represents errors that can occur within the EVCC protocol logic or Modbus ASCII framing.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum Error {
-    /// The provided LRC checksum did not match the calculated checksum.
-    #[error("LRC checksum error: expected {expected:#04X}, calculated {calculated:#04X}")]
-    InvalidLrc { expected: u8, calculated: u8 },
-
-    /// The frame format is invalid or malformed.
-    #[error("Invalid Modbus ASCII frame format")]
-    InvalidFrame,
-
-    /// Failed to parse hexadecimal representation.
-    #[error("Failed to decode hex string")]
-    HexDecodeError,
-
-    /// An exception response was returned by the slave device.
-    #[error("Modbus exception response: function code {function_code:#04X}, exception code {exception_code:#04X}")]
-    ExceptionResponse { function_code: u8, exception_code: u8 },
-
-    /// The provided Device ID is outside the permissible range (0x01..0x10 or 0x00 for broadcast).
-    #[error("Device ID {0} is out of permissible range (1..=16)")]
-    DeviceIdOutOfRange(u8),
-
-    /// The provided current is out of permissible range.
-    #[error("Charging current {0}A is out of permissible range (0 or 6..=80A)")]
-    CurrentOutOfRange(u16),
-
-    /// An unexpected or invalid value was received in a register field.
-    #[error("Invalid register value encountered")]
-    InvalidValue,
-
-    /// The number of words provided is incorrect for the target register or structure.
-    #[error("Words count error for register decoding")]
-    WordsCountError,
-}
-
-/// 16-bit word stored in a Modbus register.
-pub type Word = u16;
+use crate::error::Error;
 
 /// Calculates the Modbus ASCII Longitudinal Redundancy Check (LRC) checksum over binary bytes.
 ///
@@ -57,7 +16,12 @@ pub fn calculate_lrc(bytes: &[u8]) -> u8 {
 ///
 /// Returns an ASCII string starting with `start_delimiter` (default `:` or `>`),
 /// followed by hex-encoded payload (device_id, function_code, payload), 2-digit hex LRC checksum, and `\r\n`.
-pub fn encode_ascii_frame(device_id: u8, function_code: u8, payload: &[u8], start_delimiter: char) -> String {
+pub fn encode_ascii_frame(
+    device_id: u8,
+    function_code: u8,
+    payload: &[u8],
+    start_delimiter: char,
+) -> String {
     let mut raw_bytes = Vec::with_capacity(2 + payload.len());
     raw_bytes.push(device_id);
     raw_bytes.push(function_code);
@@ -97,7 +61,8 @@ pub fn decode_ascii_frame(frame: &str) -> Result<(u8, u8, Vec<u8>), Error> {
 
     let mut bytes = Vec::with_capacity(hex_part.len() / 2);
     for i in (0..hex_part.len()).step_by(2) {
-        let byte = u8::from_str_radix(&hex_part[i..i + 2], 16).map_err(|_| Error::HexDecodeError)?;
+        let byte =
+            u8::from_str_radix(&hex_part[i..i + 2], 16).map_err(|_| Error::HexDecodeError)?;
         bytes.push(byte);
     }
 
@@ -133,640 +98,573 @@ pub fn decode_ascii_frame(frame: &str) -> Result<(u8, u8, Vec<u8>), Error> {
     Ok((device_id, function_code, payload))
 }
 
-/// A trait for defining Modbus parameters and registers.
-pub trait ModbusParam: Sized {
-    /// The Modbus register address.
-    const ADDRESS: u16;
-    /// Quantity of Modbus 16-bit words.
-    const QUANTITY: u16;
-    /// Associated protocol return / value type.
-    type ProtocolType;
+// =============================================================================
+// ABL EVCC2/3 (eMH1 / eMH2) Modbus ASCII Protocol (docs/Schnittstellenbeschreibung_Modbus-ASCII.pdf)
+// =============================================================================
+
+/// Register addresses for ABL EVCC2/3 charge controllers
+pub mod evcc2_registers {
+    pub const REG_FIRMWARE: u16 = 0x0001; // 2 words
+    pub const REG_MODBUS_SETTINGS: u16 = 0x0003; // 1 word
+    pub const REG_STATUS: u16 = 0x0004; // 1 word
+    pub const REG_MODIFY_STATE: u16 = 0x0005; // 1 word
+    pub const REG_SYSTEM_FLAGS: u16 = 0x0006; // 2 words
+    pub const REG_ENABLED: u16 = 0x000F; // 5 words
+    pub const REG_AMPS_CONFIG: u16 = 0x0014; // 1 word
+    pub const REG_STATUS_LONG: u16 = 0x002E; // 5 words
+    pub const REG_STATUS_AMPS: u16 = 0x0033; // 3 words
+
+    pub const AMPS_DISABLED: u16 = 0x03E8; // 1000 = disabled / 100% duty cycle
 }
 
-/// Convert a slice of 16-bit words into big-endian byte vector.
-pub fn words_to_bytes(words: &[Word]) -> Vec<u8> {
-    words.iter().flat_map(|w| w.to_be_bytes()).collect()
-}
-
-/// Convert a byte slice into a vector of 16-bit words (big-endian).
-pub fn bytes_to_words(bytes: &[u8]) -> Vec<Word> {
-    bytes
-        .chunks(2)
-        .map(|chunk| {
-            if chunk.len() == 2 {
-                u16::from_be_bytes([chunk[0], chunk[1]])
-            } else {
-                u16::from_be_bytes([chunk[0], 0])
-            }
-        })
-        .collect()
-}
-
-// -----------------------------------------------------------------------------
-// Register 256 (0x0100): Ladestatus (Fahrzeug-Status) (Read Holding, 1 word)
-// -----------------------------------------------------------------------------
-
-/// Vehicle charging status according to IEC 61851-1 / EVCC1.
-/// Represented as numeric ASCII code (e.g. 65 for 'A', 66 for 'B', etc.).
+/// EVCC2/3 state code (as reported in register 0x0004 and 0x002E).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum VehicleStatus {
-    /// Standby / Ready (No vehicle connected) - ASCII 65 ('A')
-    Ready,
-    /// Vehicle connected, waiting for charge enable - ASCII 66 ('B')
-    Connected,
-    /// Charging in progress - ASCII 67 ('C')
+pub enum Evcc2Status {
+    /// 0xA1: Waiting for EV (IEC State A)
+    WaitingForEv,
+    /// 0xB1: EV is asking for charging (IEC State B)
+    EvAskingForCharging,
+    /// 0xB2: EV has the permission to charge (IEC State B)
+    EvPermissionToCharge,
+    /// 0xC2: EV is charged (IEC State C)
     Charging,
-    /// Charging with external ventilation - ASCII 68 ('D')
-    Ventilation,
-    /// No power / disconnected / disabled - ASCII 69 ('E')
-    Disabled,
-    /// Fault / Error condition - ASCII 70 ('F')
-    Fault,
-    /// Other status value
-    Other(u16),
+    /// 0xC3: C2, reduced current (error F16, F17)
+    ChargingReducedF16F17,
+    /// 0xC4: C2, reduced current (imbalance F15)
+    ChargingReducedImbalance,
+    /// 0xE0: Outlet disabled
+    OutletDisabled,
+    /// 0xE1: Production test
+    ProductionTest,
+    /// 0xE2: EVCC setup mode
+    SetupMode,
+    /// 0xE3: Bus idle
+    BusIdle,
+    /// 0xF1: Unintended closed contact (Welding)
+    WeldingDetected,
+    /// 0xF2: Internal error
+    InternalError,
+    /// 0xF3: DC residual current detected
+    ResidualCurrentDetected,
+    /// 0xF4: Upstream communication timeout
+    CommunicationTimeout,
+    /// 0xF5: Lock of socket failed
+    SocketLockFailed,
+    /// 0xF6: CS out of range
+    CableSenseOutOfRange,
+    /// 0xF7: State D requested by EV
+    VentilationRequested,
+    /// 0xF8: CP out of range
+    ControlPilotOutOfRange,
+    /// 0xF9: Overcurrent detected
+    OvercurrentDetected,
+    /// 0xFA: Temperature outside limits
+    TemperatureOutsideLimits,
+    /// 0xFB: Unintended opened contact
+    ContactorOpenedError,
+    /// Other / vendor specific
+    Other(u8),
 }
 
-impl VehicleStatus {
-    pub fn from_raw(val: u16) -> Self {
-        // Handle both high byte or low byte encoding if device returns ASCII in lower or upper byte
-        let ascii_code = if (val & 0xFF) >= 0x20 && (val & 0xFF) <= 0x7E {
-            val & 0xFF
-        } else if (val >> 8) >= 0x20 && (val >> 8) <= 0x7E {
-            val >> 8
-        } else {
-            val
-        };
-
-        match ascii_code {
-            65 => Self::Ready,
-            66 => Self::Connected,
-            67 => Self::Charging,
-            68 => Self::Ventilation,
-            69 => Self::Disabled,
-            70 => Self::Fault,
+impl Evcc2Status {
+    pub fn from_raw(code: u8) -> Self {
+        match code {
+            0xA1 => Self::WaitingForEv,
+            0xB1 => Self::EvAskingForCharging,
+            0xB2 => Self::EvPermissionToCharge,
+            0xC2 => Self::Charging,
+            0xC3 => Self::ChargingReducedF16F17,
+            0xC4 => Self::ChargingReducedImbalance,
+            0xE0 => Self::OutletDisabled,
+            0xE1 => Self::ProductionTest,
+            0xE2 => Self::SetupMode,
+            0xE3 => Self::BusIdle,
+            0xF1 => Self::WeldingDetected,
+            0xF2 => Self::InternalError,
+            0xF3 => Self::ResidualCurrentDetected,
+            0xF4 => Self::CommunicationTimeout,
+            0xF5 => Self::SocketLockFailed,
+            0xF6 => Self::CableSenseOutOfRange,
+            0xF7 => Self::VentilationRequested,
+            0xF8 => Self::ControlPilotOutOfRange,
+            0xF9 => Self::OvercurrentDetected,
+            0xFA => Self::TemperatureOutsideLimits,
+            0xFB => Self::ContactorOpenedError,
             other => Self::Other(other),
         }
     }
 
+    pub fn raw_code(&self) -> u8 {
+        match self {
+            Self::WaitingForEv => 0xA1,
+            Self::EvAskingForCharging => 0xB1,
+            Self::EvPermissionToCharge => 0xB2,
+            Self::Charging => 0xC2,
+            Self::ChargingReducedF16F17 => 0xC3,
+            Self::ChargingReducedImbalance => 0xC4,
+            Self::OutletDisabled => 0xE0,
+            Self::ProductionTest => 0xE1,
+            Self::SetupMode => 0xE2,
+            Self::BusIdle => 0xE3,
+            Self::WeldingDetected => 0xF1,
+            Self::InternalError => 0xF2,
+            Self::ResidualCurrentDetected => 0xF3,
+            Self::CommunicationTimeout => 0xF4,
+            Self::SocketLockFailed => 0xF5,
+            Self::CableSenseOutOfRange => 0xF6,
+            Self::VentilationRequested => 0xF7,
+            Self::ControlPilotOutOfRange => 0xF8,
+            Self::OvercurrentDetected => 0xF9,
+            Self::TemperatureOutsideLimits => 0xFA,
+            Self::ContactorOpenedError => 0xFB,
+            Self::Other(c) => *c,
+        }
+    }
+
+    /// Single letter status according to IEC 61851-1 ('A', 'B', 'C', 'D', 'E', 'F')
     pub fn as_char(&self) -> char {
         match self {
-            Self::Ready => 'A',
-            Self::Connected => 'B',
-            Self::Charging => 'C',
-            Self::Ventilation => 'D',
-            Self::Disabled => 'E',
-            Self::Fault => 'F',
-            Self::Other(val) => {
-                if *val >= 32 && *val <= 126 {
-                    (*val as u8) as char
-                } else {
-                    '?'
+            Self::WaitingForEv => 'A',
+            Self::EvAskingForCharging | Self::EvPermissionToCharge => 'B',
+            Self::Charging | Self::ChargingReducedF16F17 | Self::ChargingReducedImbalance => 'C',
+            Self::VentilationRequested => 'D',
+            Self::OutletDisabled | Self::ProductionTest | Self::SetupMode | Self::BusIdle => 'E',
+            Self::WeldingDetected
+            | Self::InternalError
+            | Self::ResidualCurrentDetected
+            | Self::CommunicationTimeout
+            | Self::SocketLockFailed
+            | Self::CableSenseOutOfRange
+            | Self::ControlPilotOutOfRange
+            | Self::OvercurrentDetected
+            | Self::TemperatureOutsideLimits
+            | Self::ContactorOpenedError => 'F',
+            Self::Other(c) => {
+                let nibble = c >> 4;
+                match nibble {
+                    0x0A => 'A',
+                    0x0B => 'B',
+                    0x0C => 'C',
+                    0x0D => 'D',
+                    0x0E => 'E',
+                    0x0F => 'F',
+                    _ => '?',
                 }
             }
         }
     }
 
-    pub fn raw_code(&self) -> u16 {
-        match self {
-            Self::Ready => 65,
-            Self::Connected => 66,
-            Self::Charging => 67,
-            Self::Ventilation => 68,
-            Self::Disabled => 69,
-            Self::Fault => 70,
-            Self::Other(val) => *val,
-        }
-    }
-
     pub fn description(&self) -> &'static str {
         match self {
-            Self::Ready => "Standby / Ready (no vehicle connected)",
-            Self::Connected => "Vehicle connected (waiting for charge enable)",
-            Self::Charging => "Charging active (vehicle is charging)",
-            Self::Ventilation => "Charging with external ventilation",
-            Self::Disabled => "Charge point disabled / switched off",
-            Self::Fault => "Fault / error condition",
-            Self::Other(_) => "Unknown status",
+            Self::WaitingForEv => "Waiting for EV (Standby)",
+            Self::EvAskingForCharging => "EV connected, waiting for charge release",
+            Self::EvPermissionToCharge => "EV connected, charging enabled",
+            Self::Charging => "EV is charging",
+            Self::ChargingReducedF16F17 => "Charging with reduced current (error F16/F17)",
+            Self::ChargingReducedImbalance => "Charging with reduced current (imbalance F15)",
+            Self::OutletDisabled => "Outlet disabled",
+            Self::ProductionTest => "Production test",
+            Self::SetupMode => "EVCC setup mode",
+            Self::BusIdle => "Bus idle",
+            Self::WeldingDetected => "Unintended closed contact (Welding fault)",
+            Self::InternalError => "Internal controller error",
+            Self::ResidualCurrentDetected => "DC residual current detected",
+            Self::CommunicationTimeout => "Upstream communication timeout",
+            Self::SocketLockFailed => "Socket lock failed",
+            Self::CableSenseOutOfRange => "Cable sensing (CS) resistor out of range",
+            Self::VentilationRequested => "State D requested by EV (external ventilation)",
+            Self::ControlPilotOutOfRange => "Control pilot (CP) voltage out of range",
+            Self::OvercurrentDetected => "Overcurrent detected",
+            Self::TemperatureOutsideLimits => "Temperature outside operating limits",
+            Self::ContactorOpenedError => "Unintended opened contact",
+            Self::Other(_) => "Unknown EVCC2 status",
         }
     }
 }
 
-impl std::fmt::Display for VehicleStatus {
+impl std::fmt::Display for Evcc2Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Status {}: {} (ASCII {})",
+            "State {} ({:#04X}): {}",
             self.as_char(),
-            self.description(),
-            self.raw_code()
+            self.raw_code(),
+            self.description()
         )
     }
 }
 
-/// Modbus holding register 256: Charging status
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Firmware and hardware version info from Register 0x0001 (2 words).
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ChargeStatus(pub VehicleStatus);
-
-impl ModbusParam for ChargeStatus {
-    const ADDRESS: u16 = 256; // 0x0100
-    const QUANTITY: u16 = 1;
-    type ProtocolType = Self;
+pub struct Evcc2Firmware {
+    pub device_id: u8,
+    pub pcba_version: String,
+    pub firmware_revision: String,
+    pub current_sensor_present: bool,
+    pub rdc_md_enabled: bool,
+    pub welding_detection_enabled: bool,
+    pub outlet_enabled: bool,
 }
 
-impl ChargeStatus {
-    pub fn decode_from_words(words: &[Word]) -> Result<Self, Error> {
-        if words.is_empty() {
+impl Evcc2Firmware {
+    pub fn decode(payload: &[u8]) -> Result<Self, Error> {
+        if payload.len() < 4 {
             return Err(Error::WordsCountError);
         }
-        Ok(Self(VehicleStatus::from_raw(words[0])))
+        // Byte 0: register referring to (0x01)
+        // Byte 1: Bits 7..6 PCBA, Bits 5..0 Device ID
+        let b1 = payload[1];
+        let pcba_bits = (b1 >> 6) & 0x03;
+        let pcba_version = match pcba_bits {
+            0 => "141215".to_string(),
+            1 => "160307".to_string(),
+            2 => "170725".to_string(),
+            _ => format!("unknown ({pcba_bits})"),
+        };
+        let device_id = b1 & 0x3F;
+
+        // Byte 2: Major (bits 7..4) and Minor (bits 3..0)
+        let b2 = payload[2];
+        let major = (b2 >> 4) & 0x0F;
+        let minor = b2 & 0x0F;
+        let firmware_revision = format!("{major}.{minor}");
+
+        // Byte 3: config flags
+        let b3 = payload[3];
+        let current_sensor_present = (b3 & 0x20) != 0;
+        let rdc_md_enabled = (b3 & 0x10) != 0;
+        let welding_detection_enabled = (b3 & 0x04) != 0;
+        let outlet_enabled = (b3 & 0x03) == 0x02;
+
+        Ok(Self {
+            device_id,
+            pcba_version,
+            firmware_revision,
+            current_sensor_present,
+            rdc_md_enabled,
+            welding_detection_enabled,
+            outlet_enabled,
+        })
     }
 }
 
-impl std::fmt::Display for ChargeStatus {
+impl std::fmt::Display for Evcc2Firmware {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        writeln!(f, "Device ID: {}", self.device_id)?;
+        writeln!(f, "Firmware Revision: V{}", self.firmware_revision)?;
+        writeln!(f, "PCBA Version: {}", self.pcba_version)?;
+        writeln!(
+            f,
+            "Internal Current Sensor: {}",
+            if self.current_sensor_present {
+                "Present"
+            } else {
+                "Not installed"
+            }
+        )?;
+        writeln!(
+            f,
+            "RDC-MD Sensor: {}",
+            if self.rdc_md_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        )?;
+        writeln!(
+            f,
+            "Contactor Welding Monitor: {}",
+            if self.welding_detection_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        )?;
+        write!(
+            f,
+            "Outlet State: {}",
+            if self.outlet_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            }
+        )
     }
 }
 
-// -----------------------------------------------------------------------------
-// Register 257 (0x0101): Maximum charging current (Read / Write Holding, 1 word)
-// -----------------------------------------------------------------------------
-
-/// Modbus holding register 257: Maximum charging current in Amperes (e.g. 16 for 16A, 0 for stop)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Modbus communication settings from Register 0x0003 (1 word / 2 bytes).
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ChargingCurrent(pub u16);
-
-impl ModbusParam for ChargingCurrent {
-    const ADDRESS: u16 = 257; // 0x0101
-    const QUANTITY: u16 = 1;
-    type ProtocolType = Self;
+pub struct Evcc2ModbusSettings {
+    pub baud_rate: u32,
+    pub parity: &'static str,
+    pub stop_bits: u8,
 }
 
-impl ChargingCurrent {
-    pub fn new(amperes: u16) -> Result<Self, Error> {
-        if amperes == 0 || (6..=80).contains(&amperes) {
-            Ok(Self(amperes))
+impl Evcc2ModbusSettings {
+    pub fn decode(payload: &[u8]) -> Result<Self, Error> {
+        if payload.len() < 2 {
+            return Err(Error::WordsCountError);
+        }
+        // Byte 0: Register referring to (0x03)
+        // Byte 1:
+        // Bits 7..6: Stop bits (00: 1 stop bit, 11: 2 stop bits)
+        // Bits 5..4: Parity (00: No parity, 01: Odd, 10: Even, 11: Invalid)
+        // Bits 3..0: Baud rate (0101: 9600, 0110: 19200, 0111: 38400, 1000: 57600)
+        let b1 = payload[1];
+        let stop_bits = if (b1 & 0xC0) == 0xC0 { 2 } else { 1 };
+        let parity = match (b1 >> 4) & 0x03 {
+            0 => "None",
+            1 => "Odd",
+            2 => "Even",
+            _ => "Unknown",
+        };
+        let baud_rate = match b1 & 0x0F {
+            0x05 => 9600,
+            0x06 => 19200,
+            0x07 => 38400,
+            0x08 => 57600,
+            other => other as u32 * 1000,
+        };
+
+        Ok(Self {
+            baud_rate,
+            parity,
+            stop_bits,
+        })
+    }
+}
+
+impl std::fmt::Display for Evcc2ModbusSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Baud rate: {} Bd, Parity: {}, Stop bits: {}",
+            self.baud_rate, self.parity, self.stop_bits
+        )
+    }
+}
+
+/// System flags from Register 0x0006 (2 words / 4 bytes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Evcc2SystemFlags {
+    pub raw_flags: u16,
+    pub state_pointer: u8,
+    pub b1_b2_disabled: bool,
+    pub b1_b2_disabled_after_power_cycle: bool,
+    pub upstream_comm_lost: bool,
+    pub load_imbalance_detected: bool,
+    pub overtemperature_detected: bool,
+    pub phase_current_meter_fault: bool,
+    pub e0_a1_disabled: bool,
+    pub a1_b1_disabled: bool,
+}
+
+impl Evcc2SystemFlags {
+    pub fn decode(payload: &[u8]) -> Result<Self, Error> {
+        if payload.len() < 4 {
+            return Err(Error::WordsCountError);
+        }
+        // Byte 0: 0x06 (register referring to)
+        // Byte 1: Pointer of state machine
+        let state_pointer = payload[1];
+        // Bytes 2..3: System flags
+        let raw_flags = u16::from_be_bytes([payload[2], payload[3]]);
+
+        let b1_b2_disabled = (raw_flags & (1 << 4)) != 0;
+        let b1_b2_disabled_after_power_cycle = (raw_flags & (1 << 14)) != 0;
+        let upstream_comm_lost = (raw_flags & (1 << 9)) != 0;
+        let load_imbalance_detected = (raw_flags & (1 << 8)) != 0;
+        let overtemperature_detected = (raw_flags & (1 << 7)) != 0;
+        let phase_current_meter_fault = (raw_flags & (1 << 6)) != 0;
+        let e0_a1_disabled = (raw_flags & (1 << 5)) != 0;
+        let a1_b1_disabled = (raw_flags & (1 << 3)) != 0;
+
+        Ok(Self {
+            raw_flags,
+            state_pointer,
+            b1_b2_disabled,
+            b1_b2_disabled_after_power_cycle,
+            upstream_comm_lost,
+            load_imbalance_detected,
+            overtemperature_detected,
+            phase_current_meter_fault,
+            e0_a1_disabled,
+            a1_b1_disabled,
+        })
+    }
+}
+
+impl std::fmt::Display for Evcc2SystemFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "Raw Flags: {:#06X} (State Pointer: {:#04X})",
+            self.raw_flags, self.state_pointer
+        )?;
+        writeln!(f, "B1->B2 Transition Disabled: {}", self.b1_b2_disabled)?;
+        writeln!(
+            f,
+            "B1->B2 Disabled After Power-Cycle: {}",
+            self.b1_b2_disabled_after_power_cycle
+        )?;
+        writeln!(
+            f,
+            "Upstream Communication Lost: {}",
+            self.upstream_comm_lost
+        )?;
+        writeln!(
+            f,
+            "Load Imbalance Detected: {}",
+            self.load_imbalance_detected
+        )?;
+        writeln!(
+            f,
+            "Overtemperature (>60°C): {}",
+            self.overtemperature_detected
+        )?;
+        writeln!(
+            f,
+            "Phase Current Meter Fault: {}",
+            self.phase_current_meter_fault
+        )?;
+        writeln!(f, "E0->A1 Transition Disabled: {}", self.e0_a1_disabled)?;
+        write!(f, "A1->B1 Transition Disabled: {}", self.a1_b1_disabled)
+    }
+}
+
+/// Complete measurement and status set from Register 0x002E (5 words / 10 bytes).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Evcc2Measurements {
+    pub status: Evcc2Status,
+    pub ev_connected: bool,
+    pub duty_cycle_reduced: bool,
+    pub en1_closed: bool,
+    pub en2_closed: bool,
+    pub duty_cycle_permille: u16,
+    pub configured_current_amperes: f32,
+    pub current_l1_amperes: f32,
+    pub current_l2_amperes: f32,
+    pub current_l3_amperes: f32,
+    pub total_power_watts: f32,
+}
+
+impl Evcc2Measurements {
+    pub fn decode(payload: &[u8]) -> Result<Self, Error> {
+        if payload.len() < 10 {
+            return Err(Error::WordsCountError);
+        }
+        // Byte 0: 0x2E
+        // Byte 1: State code
+        let status = Evcc2Status::from_raw(payload[1]);
+
+        // Byte 2:
+        // bit 7: U_CP >= 10V (EV connected)
+        // bit 6: Duty cycle reduced
+        // bit 5: EN2 closed
+        // bit 4: EN1 closed
+        // bits 3..0: upper 4 bits of duty cycle
+        let b2 = payload[2];
+        let ev_connected = (b2 & 0x80) != 0;
+        let duty_cycle_reduced = (b2 & 0x40) != 0;
+        let en2_closed = (b2 & 0x20) != 0;
+        let en1_closed = (b2 & 0x10) != 0;
+
+        let duty_high = (b2 & 0x0F) as u16;
+        let duty_low = payload[3] as u16;
+        let duty_cycle_permille = (duty_high << 8) | duty_low;
+
+        // Configured current limit in Amperes: duty * 0.06
+        let configured_current_amperes =
+            if duty_cycle_permille == evcc2_registers::AMPS_DISABLED || duty_cycle_permille == 0 {
+                0.0
+            } else {
+                (duty_cycle_permille as f32 * 0.06 * 10.0).round() / 10.0
+            };
+
+        // Currents in 0.1A
+        let raw_l1 = u16::from_be_bytes([payload[4], payload[5]]);
+        let raw_l2 = u16::from_be_bytes([payload[6], payload[7]]);
+        let raw_l3 = u16::from_be_bytes([payload[8], payload[9]]);
+
+        let l1 = if raw_l1 == 0x03E8 || raw_l1 == 1 {
+            0.0
         } else {
-            Err(Error::CurrentOutOfRange(amperes))
-        }
-    }
-
-    pub fn encode_to_word(&self) -> Word {
-        self.0
-    }
-
-    pub fn decode_from_words(words: &[Word]) -> Result<Self, Error> {
-        if words.is_empty() {
-            return Err(Error::WordsCountError);
-        }
-        Ok(Self(words[0]))
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.0 >= 6
-    }
-}
-
-impl std::fmt::Display for ChargingCurrent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0 == 0 {
-            write!(f, "0A (Disabled / Charge permission revoked)")
+            raw_l1 as f32 / 10.0
+        };
+        let l2 = if raw_l2 == 0x03E8 || raw_l2 == 1 {
+            0.0
         } else {
-            write!(f, "{}A", self.0)
-        }
+            raw_l2 as f32 / 10.0
+        };
+        let l3 = if raw_l3 == 0x03E8 || raw_l3 == 1 {
+            0.0
+        } else {
+            raw_l3 as f32 / 10.0
+        };
+
+        // Power in Watts at 230V per phase
+        let total_power_watts = (l1 + l2 + l3) * 230.0;
+
+        Ok(Self {
+            status,
+            ev_connected,
+            duty_cycle_reduced,
+            en1_closed,
+            en2_closed,
+            duty_cycle_permille,
+            configured_current_amperes,
+            current_l1_amperes: l1,
+            current_l2_amperes: l2,
+            current_l3_amperes: l3,
+            total_power_watts,
+        })
     }
 }
 
-// -----------------------------------------------------------------------------
-// Register 258 (0x0102): Active charging power or current (Read Holding, 1 word)
-// -----------------------------------------------------------------------------
-
-/// Modbus holding register 258: Active charging power or current
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct PowerOrCurrent(pub u16);
-
-impl ModbusParam for PowerOrCurrent {
-    const ADDRESS: u16 = 258; // 0x0102
-    const QUANTITY: u16 = 1;
-    type ProtocolType = Self;
-}
-
-impl PowerOrCurrent {
-    pub fn decode_from_words(words: &[Word]) -> Result<Self, Error> {
-        if words.is_empty() {
-            return Err(Error::WordsCountError);
-        }
-        Ok(Self(words[0]))
-    }
-
-    pub fn raw(&self) -> u16 {
-        self.0
-    }
-}
-
-impl std::fmt::Display for PowerOrCurrent {
+impl std::fmt::Display for Evcc2Measurements {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Value: {}", self.0)
+        writeln!(f, "Status: {}", self.status)?;
+        writeln!(
+            f,
+            "EV Connected: {}",
+            if self.ev_connected { "Yes" } else { "No" }
+        )?;
+        writeln!(
+            f,
+            "Configured Current Limit: {:.1}A (Duty Cycle: {:.1}%)",
+            self.configured_current_amperes,
+            self.duty_cycle_permille as f32 / 10.0
+        )?;
+        writeln!(f, "Current L1: {:.1} A", self.current_l1_amperes)?;
+        writeln!(f, "Current L2: {:.1} A", self.current_l2_amperes)?;
+        writeln!(f, "Current L3: {:.1} A", self.current_l3_amperes)?;
+        write!(f, "Total Active Power: {:.1} W", self.total_power_watts)
     }
 }
 
-// =============================================================================
-// ABL SURSUM EVCC Native Serial ASCII Protocol (as documented in docs/EVCC.pdf)
-// =============================================================================
-
-/// Command codes for the native ABL SURSUM serial ASCII protocol documented in docs/EVCC.pdf.
-///
-/// In this protocol, commands are transmitted as ASCII strings over RS485 with the syntax:
-/// `!n cc [xxxx]\r\n` where:
-/// - `n` is the module address (1..8, or 0 for broadcast)
-/// - `cc` is the 2-digit command code
-/// - `xxxx` is an optional 4-character parameter
-///
-/// Replies are returned with the syntax:
-/// `>n cc [xxxx]\r\n`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum EvccCommand {
-    /// **Command 00: Module Reset**
-    ///
-    /// Request: `!n 00 1111`
-    /// Reply: none (controller restarts)
-    /// Precondition: Available only in state A or in MANUAL mode.
-    Reset,
-
-    /// **Command 01: Query Firmware Revision**
-    ///
-    /// Request: `!n 01`
-    /// Reply: `>n 01 Vx.y` (e.g. `>1 01 V2.3`)
-    /// Precondition: Available in all states (A and MANUAL).
-    GetFirmware,
-
-    /// **Command 02: Query Charge Controller State / Status**
-    ///
-    /// Request: `!n 02`
-    /// Reply: `>n 02 xxxx` where `xxxx` represents the current state machine position:
-    /// - `0000`: State A (Standby / No EV connected)
-    /// - `0004`: State B2 (EV connected, charge enabled, waiting for EV)
-    /// - `0005`: State C (Charging active)
-    /// - `0006`: State D (Charging active with external ventilation)
-    /// - `0009`: State B' (Charging stopped by vehicle)
-    /// - `0013`: State B1 (EV connected, charging halted / not yet released)
-    /// - `0017`: State A' (CP 0V / vehicle wake-up state)
-    /// - `0033`: CS error (Cable resistance reading out of range)
-    /// - `0035`: EV diode error (Vehicle diode defective)
-    /// - `0037`: Lock error (Type 2 socket locking actuator failed)
-    /// - `0039`: Ventilation error
-    /// - `0255`: MANUAL state (automatic state machine disabled)
-    GetStatus,
-
-    /// **Command 03: Switch to MANUAL Mode**
-    ///
-    /// Disables the automatic IEC 61851-1 state machine to allow direct hardware diagnosis.
-    /// Request: `!n 03`
-    /// Reply: `>n 03`
-    /// Precondition: Available only when in State A.
-    SwitchToManual,
-
-    /// **Command 04: Query Relay / Output Status**
-    ///
-    /// Returns the bitmask sum of currently energized outputs:
-    /// - `0001`: Output X1 on (LED)
-    /// - `0002`: Output X2 on (LED)
-    /// - `0004`: Relay K1 on (Main contactor / power supply to vehicle)
-    /// - `0008`: Relay K2 on (Ventilation relay)
-    /// - `0016`: Relay K3 on (Socket locking actuator)
-    /// - `0032`: CP +12V active
-    /// - `0064`: CP -12V active
-    /// Request: `!n 04`
-    /// Reply: `>n 04 xxxx`
-    GetOutputStatus,
-
-    /// **Command 05: Set Output On**
-    ///
-    /// Manually energizes selected outputs specified by bitmask parameter `xxxx` (see Cmd 04).
-    /// Request: `!n 05 xxxx`
-    /// Reply: `>n 05`
-    /// Precondition: Available only in MANUAL mode.
-    SetOutput,
-
-    /// **Command 06: Clear Output Off**
-    ///
-    /// Manually de-energizes selected outputs specified by bitmask parameter `xxxx` (see Cmd 04).
-    /// Request: `!n 06 xxxx`
-    /// Reply: `>n 06`
-    /// Precondition: Available only in MANUAL mode.
-    ClearOutput,
-
-    /// **Command 07: Query Positive Control Pilot (CP) Voltage**
-    ///
-    /// Reads the ADC voltage reading of positive CP signal:
-    /// Calculation: $U_{CP} = 0.017 \times \text{xxxx}\text{ [V]}$
-    /// Request: `!n 07`
-    /// Reply: `>n 07 xxxx`
-    GetAdcPosUcp,
-
-    /// **Command 08: Query Negative Control Pilot (CP) Voltage**
-    ///
-    /// Reads the ADC voltage reading of negative CP signal:
-    /// Calculation: $U_{CP} = 0.017 \times \text{xxxx}\text{ [V]}$
-    /// Request: `!n 08`
-    /// Reply: `>n 08 xxxx`
-    GetAdcNegUcp,
-
-    /// **Command 09: Query Cable Sensing (CS) ADC Value**
-    ///
-    /// Reads the Cable Detection (Proximity / PP) ADC raw value (range 0..1023).
-    /// Request: `!n 09`
-    /// Reply: `>n 09 xxxx`
-    GetAdcUcs,
-
-    /// **Command 10: Query Digital Inputs**
-    ///
-    /// Reads the state of hardware inputs E1 (Enable switch) and E2 (Lock feedback switch):
-    /// - `0000`: E1 and E2 open
-    /// - `0001`: E1 closed, E2 open
-    /// - `0002`: E2 closed, E1 open
-    /// - `0003`: Both E1 and E2 closed
-    /// Request: `!n 10`
-    /// Reply: `>n 10 xxxx`
-    GetInputs,
-
-    /// **Command 11: Query Present PWM Duty Cycle / Charging Current**
-    ///
-    /// Returns the currently signalled PWM duty cycle in 0.1% steps:
-    /// Calculation: $I = \text{PWM} \times 0.6\,\text{A}$ (or $(\text{PWM} - 64) \times 2.5\,\text{A}$ for $>51\,\text{A}$).
-    /// Request: `!n 11`
-    /// Reply: `>n 11 xxxx`
-    GetPresentPwm,
-
-    /// **Command 12: Set PWM Duty Cycle / Charging Current**
-    ///
-    /// Sets the maximum current signalled to the connected electric vehicle:
-    /// - Preset steps: `0000`=6A, `0001`=10A, `0002`=13A, `0003`=16A, `0004`=20A, `0005`=30A, `0006`=32A, `0007`=63A, `0008`=70A, `0009`=80A
-    /// - `0010`: Revert to factory/module default charging current
-    /// - `0080`..`0970`: Direct PWM duty cycle in 0.1% steps (8.0% .. 97.0%)
-    /// - `0999`: Charging prohibited (halt charging, disconnect power)
-    /// Request: `!n 12 xxxx`
-    /// Reply: `>n 12`
-    SetPwm,
-
-    /// **Command 13: Enable PWM Generator**
-    ///
-    /// Manually turns on the PWM oscillator on the Control Pilot line.
-    /// Request: `!n 13`
-    /// Reply: `>n 13`
-    /// Precondition: Available only in MANUAL mode.
-    EnablePwm,
-
-    /// **Command 14: Disable PWM Generator**
-    ///
-    /// Manually turns off the PWM oscillator on the Control Pilot line.
-    /// Request: `!n 14`
-    /// Reply: `>n 14`
-    /// Precondition: Available only in MANUAL mode.
-    DisablePwm,
-
-    /// **Command 15: Set Default Charging Current (Default PWM)**
-    ///
-    /// Persists the module's non-volatile default charging current limit:
-    /// Parameters `0000`..`0009` corresponding to 6A..80A.
-    /// Request: `!n 15 xxxx`
-    /// Reply: `>n 15`
-    /// Precondition: Available only in MANUAL mode.
-    SetDefaultPwm,
-
-    /// **Command 16: Configure External Ventilation Marker**
-    ///
-    /// Informs the controller whether external room ventilation is connected:
-    /// - `1110`: Ventilation connected
-    /// - `1111`: No ventilation connected
-    /// Request: `!n 16 111x`
-    /// Reply: `>n 16`
-    /// Precondition: Available only in MANUAL mode.
-    SetVentilationMarker,
-
-    /// **Command 17: Query Ventilation Marker**
-    ///
-    /// Reads ventilation configuration: `0000` = connected, `0001` = not connected.
-    /// Request: `!n 17`
-    /// Reply: `>n 17 000x`
-    GetVentilationMarker,
-
-    /// **Command 22: Configure Module RS485 Address**
-    ///
-    /// Reassigns the controller's bus address to address `1` through `8`:
-    /// Parameter: `1111`=Address 1, `1112`=Address 2, ... `1118`=Address 8.
-    /// Request: `!n 22 111x`
-    /// Reply: `>n 22`
-    /// Precondition: Available only in MANUAL mode.
-    SetModuleAddress,
-
-    /// **Command 23: Query Module RS485 Address**
-    ///
-    /// Returns the controller's configured bus address (`0001` .. `0008`, or `0000`).
-    /// Request: `!n 23`
-    /// Reply: `>n 23 000x`
-    GetModuleAddress,
-
-    /// **Command 24: Factory Reset**
-    ///
-    /// Resets all controller parameters to factory defaults and restarts.
-    /// Request: `!n 24 1111`
-    /// Reply: `>n 01 Vx.y` (firmware revision banner)
-    /// Precondition: Available only in MANUAL mode.
-    LoadFactorySettingsAndReset,
-
-    /// **Command 25: Terminate Charging Session / Exit MANUAL Mode**
-    ///
-    /// Leaves MANUAL mode and returns the charge controller to normal automatic operation.
-    /// Request: `!n 25`
-    /// Reply: `>n 25`
-    StopChargingOrLeaveManual,
-
-    /// **Command 26: Query Default PWM Duty Cycle**
-    ///
-    /// Reads the stored default PWM duty cycle in 0.1% steps:
-    /// Calculation: $I_{DEFAULT} = \text{PWM} \times 0.6\,\text{A}$
-    /// Request: `!n 26`
-    /// Reply: `>n 26 xxxx`
-    GetDefaultPwm,
-
-    /// **Command 27: Set Charging Halt (`bBreakCharge = 1`)**
-    ///
-    /// Sets the break charge flag. The controller halts the state machine in State B1
-    /// (vehicle connected, but power contactor opened and charging paused).
-    /// Request: `!n 27`
-    /// Reply: `>n 27`
-    SetBreakCharge,
-
-    /// **Command 28: Clear Charging Halt (`bBreakCharge = 0`)**
-    ///
-    /// Clears the break charge flag and releases charging (transition B1 -> B2 -> C).
-    /// Request: `!n 28`
-    /// Reply: `>n 28`
-    ClearBreakCharge,
-
-    /// **Command 29: Query Charging Halt Status (`bBreakCharge`)**
-    ///
-    /// Reads whether charging is halted: `0000` = released/normal, `0001` = halted in B1.
-    /// Request: `!n 29`
-    /// Reply: `>n 29 xxxx`
-    GetBreakCharge,
-
-    /// **Command 30: Switch to State A' (Disconnect CP / Vehicle Wake-Up)**
-    ///
-    /// Forces Control Pilot voltage to 0V (State A'). Used to simulate cable unplugging
-    /// to wake up sleeping electric vehicles.
-    /// Request: `!n 30`
-    /// Reply: `>n 30`
-    SwitchToAPrime,
-
-    /// **Command 31: Leave State A' (Restore CP)**
-    ///
-    /// Restores standard +12V Control Pilot signal (returns from State A' to State A).
-    /// Request: `!n 31`
-    /// Reply: `>n 31`
-    LeaveAPrime,
-
-    /// **Custom or Unknown Command Code**
-    Other(u8),
-}
-
-impl EvccCommand {
-    pub fn code(&self) -> u8 {
-        match self {
-            Self::Reset => 0,
-            Self::GetFirmware => 1,
-            Self::GetStatus => 2,
-            Self::SwitchToManual => 3,
-            Self::GetOutputStatus => 4,
-            Self::SetOutput => 5,
-            Self::ClearOutput => 6,
-            Self::GetAdcPosUcp => 7,
-            Self::GetAdcNegUcp => 8,
-            Self::GetAdcUcs => 9,
-            Self::GetInputs => 10,
-            Self::GetPresentPwm => 11,
-            Self::SetPwm => 12,
-            Self::EnablePwm => 13,
-            Self::DisablePwm => 14,
-            Self::SetDefaultPwm => 15,
-            Self::SetVentilationMarker => 16,
-            Self::GetVentilationMarker => 17,
-            Self::SetModuleAddress => 22,
-            Self::GetModuleAddress => 23,
-            Self::LoadFactorySettingsAndReset => 24,
-            Self::StopChargingOrLeaveManual => 25,
-            Self::GetDefaultPwm => 26,
-            Self::SetBreakCharge => 27,
-            Self::ClearBreakCharge => 28,
-            Self::GetBreakCharge => 29,
-            Self::SwitchToAPrime => 30,
-            Self::LeaveAPrime => 31,
-            Self::Other(c) => *c,
-        }
-    }
-
-    pub fn from_code(code: u8) -> Self {
-        match code {
-            0 => Self::Reset,
-            1 => Self::GetFirmware,
-            2 => Self::GetStatus,
-            3 => Self::SwitchToManual,
-            4 => Self::GetOutputStatus,
-            5 => Self::SetOutput,
-            6 => Self::ClearOutput,
-            7 => Self::GetAdcPosUcp,
-            8 => Self::GetAdcNegUcp,
-            9 => Self::GetAdcUcs,
-            10 => Self::GetInputs,
-            11 => Self::GetPresentPwm,
-            12 => Self::SetPwm,
-            13 => Self::EnablePwm,
-            14 => Self::DisablePwm,
-            15 => Self::SetDefaultPwm,
-            16 => Self::SetVentilationMarker,
-            17 => Self::GetVentilationMarker,
-            22 => Self::SetModuleAddress,
-            23 => Self::GetModuleAddress,
-            24 => Self::LoadFactorySettingsAndReset,
-            25 => Self::StopChargingOrLeaveManual,
-            26 => Self::GetDefaultPwm,
-            27 => Self::SetBreakCharge,
-            28 => Self::ClearBreakCharge,
-            29 => Self::GetBreakCharge,
-            30 => Self::SwitchToAPrime,
-            31 => Self::LeaveAPrime,
-            c => Self::Other(c),
-        }
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Reset => "Reset",
-            Self::GetFirmware => "Get firmware",
-            Self::GetStatus => "Get status",
-            Self::SwitchToManual => "Switch to MANUAL",
-            Self::GetOutputStatus => "Status output",
-            Self::SetOutput => "Set output",
-            Self::ClearOutput => "Clear output",
-            Self::GetAdcPosUcp => "Get ADC value pos. U_CP",
-            Self::GetAdcNegUcp => "Get ADC value neg. U_CP",
-            Self::GetAdcUcs => "Get ADC value U_CS",
-            Self::GetInputs => "Get input",
-            Self::GetPresentPwm => "Get present PWM",
-            Self::SetPwm => "Set PWM",
-            Self::EnablePwm => "PWM enabled",
-            Self::DisablePwm => "PWM disabled",
-            Self::SetDefaultPwm => "Set default PWM",
-            Self::SetVentilationMarker => "Set marker ventilation",
-            Self::GetVentilationMarker => "Get marker ventilation",
-            Self::SetModuleAddress => "Set address of module",
-            Self::GetModuleAddress => "Get address of module",
-            Self::LoadFactorySettingsAndReset => "Load factory settings and reset",
-            Self::StopChargingOrLeaveManual => "Stop charging or leave MANUAL",
-            Self::GetDefaultPwm => "Get default PWM",
-            Self::SetBreakCharge => "Set bBreakCharge",
-            Self::ClearBreakCharge => "Clear bBreakCharge",
-            Self::GetBreakCharge => "Get bBreakCharge",
-            Self::SwitchToAPrime => "Switch to A'",
-            Self::LeaveAPrime => "Leave A'",
-            Self::Other(_) => "Custom command",
-        }
-    }
-}
-
-/// Encode an EVCC serial request line: `!n cc [parameter]\r\n`
-pub fn encode_evcc_request(address: u8, cmd: EvccCommand, param: Option<&str>) -> String {
-    match param {
-        Some(p) if !p.trim().is_empty() => format!("!{} {:02} {}\r\n", address, cmd.code(), p.trim()),
-        _ => format!("!{} {:02}\r\n", address, cmd.code()),
-    }
-}
-
-/// Parse an EVCC serial reply line: `>n cc[ parameter]\r\n`
-pub fn parse_evcc_reply(line: &str) -> Result<(u8, u8, Option<String>), Error> {
-    let trimmed = line.trim();
-    if !trimmed.starts_with('>') {
-        return Err(Error::InvalidFrame);
-    }
-    let content = &trimmed[1..];
-    let parts: Vec<&str> = content.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Err(Error::InvalidFrame);
-    }
-
-    let addr = parts[0].parse::<u8>().map_err(|_| Error::InvalidValue)?;
-    let cmd = parts[1].parse::<u8>().map_err(|_| Error::InvalidValue)?;
-    let param = if parts.len() > 2 {
-        Some(parts[2..].join(" "))
+/// Convert target Amperes (6..=80 or 0 to disable) to EVCC2 duty cycle parameter.
+pub fn amperes_to_evcc2_duty_cycle(amperes: u16) -> u16 {
+    if amperes == 0 {
+        evcc2_registers::AMPS_DISABLED
     } else {
-        None
-    };
+        ((amperes as f32 / 0.06).round() as u16).clamp(80, 1000)
+    }
+}
 
-    Ok((addr, cmd, param))
+/// Converts total 3-phase power in Watts (assuming 230V per phase, 3 phases)
+/// to charging current in Amperes per phase: `I = round(P / (3 * 230))`.
+///
+/// Returns 0 if watts == 0, or clamps between 6A and 80A.
+pub fn power_watts_to_amperes(watts: u32) -> u16 {
+    if watts == 0 {
+        0
+    } else {
+        let amps = (watts as f64 / (3.0 * 230.0)).round() as u16;
+        amps.clamp(6, 80)
+    }
 }

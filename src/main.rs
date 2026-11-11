@@ -1,4 +1,4 @@
-use abl_evcc_lib::{protocol as proto, tokio_sync_safe_client::SafeClient, ModbusParam};
+use abl_evcc_lib::{protocol as proto, tokio_sync::AsciiClient};
 use anyhow::{Context, Result};
 use clap::Parser;
 use flexi_logger::{Logger, LoggerHandle};
@@ -8,6 +8,33 @@ use std::{ops::Deref, panic, time::Duration};
 mod commandline;
 mod daemon;
 mod mqtt;
+
+/// Calculates the minimum serial inter-frame delay based on baud rate (minimum 3.5 character times).
+/// Reference: <https://minimalmodbus.readthedocs.io/en/stable/serialcommunication.html#timing-of-the-serial-communications>
+pub fn minimum_serial_delay(baud_rate: u32) -> Duration {
+    // Timing of serial communications (minimum 3.5 character times)
+    let rate = baud_rate as f64;
+    let bit_time = Duration::from_secs_f64(1.0 / rate);
+    let char_time = bit_time * 11;
+    let result = Duration::from_millis((char_time.as_secs_f64() * 3.5 * 1_000.0) as u64);
+    let min_duration = Duration::from_micros(1_750);
+    if result < min_duration {
+        min_duration
+    } else {
+        result
+    }
+}
+
+pub fn check_serial_delay(delay: Duration, baud_rate: u32) -> Duration {
+    let min_delay = minimum_serial_delay(baud_rate);
+    if delay < min_delay {
+        warn!(
+            "Your serial delay of {delay:?} is below the minimum delay of {min_delay:?}, fallback to minimum"
+        );
+        return min_delay;
+    }
+    delay
+}
 
 fn logging_init(loglevel: LevelFilter) -> LoggerHandle {
     let log_handle = Logger::try_with_env_or_str(loglevel.as_str())
@@ -44,48 +71,49 @@ fn logging_init(loglevel: LevelFilter) -> LoggerHandle {
     log_handle
 }
 
-fn minimum_rtu_delay(baud_rate: u32) -> Duration {
-    let bit_time = Duration::from_secs_f64(1.0 / (baud_rate as f64));
-    let char_time = bit_time * 11;
-    let result = Duration::from_millis((char_time.as_secs_f64() * 3.5 * 1_000.0) as u64);
-    let min_duration = Duration::from_micros(1_750);
-    if result < min_duration {
-        min_duration
-    } else {
-        result
-    }
-}
-
-fn check_rtu_delay(delay: Duration, baud_rate: u32) -> Duration {
-    let min_rtu_delay = minimum_rtu_delay(baud_rate);
-    if delay < min_rtu_delay {
-        warn!(
-            "Your RTU delay of {delay:?} is below the minimum delay of {min_rtu_delay:?}, fallback to minimum"
-        );
-        return min_rtu_delay;
-    }
-    delay
-}
-
 fn handle_commands(
-    client: &mut SafeClient,
+    client: &mut AsciiClient,
     command: &commandline::Commands,
-    delay: &Duration,
+    delay: Duration,
     no_json: bool,
 ) -> Result<()> {
     match command {
         commandline::Commands::Daemon { poll_iterval, mode } => {
-            let interval = *delay.max(poll_iterval);
+            let interval = delay.max(*poll_iterval);
             daemon::run(client, mode.clone(), interval, no_json)?;
         }
         commandline::Commands::ReadAll => {
-            let values = client
-                .read_all(delay)
-                .with_context(|| "Cannot read all values")?;
+            let fw = client.read_firmware().ok();
+            let flags = client.read_system_flags().ok();
+            let meas = client
+                .read_measurements()
+                .with_context(|| "Cannot read measurements and status from wallbox")?;
             if no_json {
-                println!("{values}");
+                if let Some(f) = &fw {
+                    println!("--- Controller Info ---");
+                    println!("{f}\n");
+                }
+                if let Some(fl) = &flags {
+                    println!("--- System Flags ---");
+                    println!("{fl}\n");
+                }
+                println!("--- Measurements & Status ---");
+                println!("{meas}");
             } else {
-                println!("{}", serde_json::to_string_pretty(&values)?);
+                #[derive(serde::Serialize)]
+                struct FullReport {
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    firmware: Option<proto::Evcc2Firmware>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    system_flags: Option<proto::Evcc2SystemFlags>,
+                    measurements: proto::Evcc2Measurements,
+                }
+                let report = FullReport {
+                    firmware: fw,
+                    system_flags: flags,
+                    measurements: meas,
+                };
+                println!("{}", serde_json::to_string_pretty(&report)?);
             }
         }
         commandline::Commands::ReadStatus => {
@@ -99,137 +127,231 @@ fn handle_commands(
             }
         }
         commandline::Commands::ReadCurrent => {
-            let current = client
-                .read_current()
-                .with_context(|| "Cannot read charging current")?;
+            let (amperes, duty) = client
+                .read_configured_current()
+                .with_context(|| "Cannot read configured current")?;
             if no_json {
-                println!("{current}");
+                println!(
+                    "Configured Charging Current: {:.1}A (Duty Cycle: {:.1}%)",
+                    amperes,
+                    duty as f32 / 10.0
+                );
             } else {
-                println!("{}", serde_json::to_string_pretty(&current)?);
+                let json = serde_json::json!({
+                    "current_amperes": amperes,
+                    "duty_cycle_permille": duty,
+                    "duty_cycle_percent": duty as f32 / 10.0,
+                    "enabled": amperes >= 6.0
+                });
+                println!("{}", serde_json::to_string_pretty(&json)?);
             }
         }
-        commandline::Commands::ReadPower => {
-            let power = client
-                .read_power_or_current()
-                .with_context(|| "Cannot read power or current")?;
-            if no_json {
-                println!("{power}");
-            } else {
-                println!("{}", serde_json::to_string_pretty(&power)?);
+        commandline::Commands::SetCurrent { amperes, force } => {
+            if *amperes == 0 && !force {
+                eprintln!("Warning: Setting charging current to 0A will immediately halt active charging.");
+                eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
             }
-        }
-        commandline::Commands::SetCurrent { amperes } => {
-            let current = proto::ChargingCurrent::new(*amperes)
-                .with_context(|| format!("Invalid charging current value: {amperes}A"))?;
             client
-                .set_current(current)
+                .set_current(*amperes)
                 .with_context(|| format!("Cannot set charging current to {amperes}A"))?;
-            println!("Charging current successfully set to: {current}");
+            if *amperes == 0 {
+                println!("Charging current disabled / stopped (0A).");
+            } else {
+                println!("Charging current successfully set to: {}A per phase (Total 3-phase power: {}W)", amperes, (*amperes as u32) * 3 * 230);
+            }
+        }
+        commandline::Commands::SetPower { watts, force } => {
+            let amps = proto::power_watts_to_amperes(*watts);
+            if amps == 0 && !force {
+                eprintln!(
+                    "Warning: Setting charging power to 0W will immediately halt active charging."
+                );
+                eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
+            client
+                .set_current(amps)
+                .with_context(|| format!("Cannot set charging power to {watts}W ({amps}A)"))?;
+            if amps == 0 {
+                println!("Charging power disabled / stopped (0W / 0A).");
+            } else {
+                println!(
+                    "Charging power {}W (3-phase) successfully converted and set to: {}A per phase (effective power: {}W).",
+                    watts, amps, (amps as u32) * 3 * 230
+                );
+            }
+        }
+        commandline::Commands::ReadCurrents => {
+            let meas = client
+                .read_measurements()
+                .with_context(|| "Cannot read phase currents")?;
+            if no_json {
+                println!("Current L1: {:.1} A", meas.current_l1_amperes);
+                println!("Current L2: {:.1} A", meas.current_l2_amperes);
+                println!("Current L3: {:.1} A", meas.current_l3_amperes);
+                println!("Total Active Power: {:.1} W", meas.total_power_watts);
+            } else {
+                let json = serde_json::json!({
+                    "current_l1": meas.current_l1_amperes,
+                    "current_l2": meas.current_l2_amperes,
+                    "current_l3": meas.current_l3_amperes,
+                    "power_watts": meas.total_power_watts
+                });
+                println!("{}", serde_json::to_string_pretty(&json)?);
+            }
+        }
+        commandline::Commands::ReadFirmware => {
+            let fw = client
+                .read_firmware()
+                .with_context(|| "Cannot read firmware information")?;
+            if no_json {
+                println!("{fw}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&fw)?);
+            }
+        }
+        commandline::Commands::ReadSystemFlags => {
+            let flags = client
+                .read_system_flags()
+                .with_context(|| "Cannot read system flags")?;
+            if no_json {
+                println!("{flags}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&flags)?);
+            }
+        }
+        commandline::Commands::ReadModbusSettings => {
+            let settings = client
+                .read_modbus_settings()
+                .with_context(|| "Cannot read Modbus settings")?;
+            if no_json {
+                println!("{settings}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&settings)?);
+            }
+        }
+        commandline::Commands::Reset { force } => {
+            if !force {
+                eprintln!("CRITICAL WARNING: Resetting the wallbox charge controller may interrupt active charging sessions!");
+                eprintln!(
+                    "Pass --force to skip confirmation. Are you sure you want to proceed? [y/N]"
+                );
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
+            println!("Sending reset command to wallbox charge controller...");
+            client
+                .reset()
+                .with_context(|| "Failed to reset charge controller")?;
+            println!("Reset command acknowledged.");
+        }
+        commandline::Commands::Enable { amperes, power } => {
+            let amps = if let Some(p) = power {
+                let converted = proto::power_watts_to_amperes(*p);
+                println!(
+                    "Converted power {}W (3-phase) to {}A per phase.",
+                    p, converted
+                );
+                converted
+            } else {
+                *amperes
+            };
+            client
+                .enable(Some(amps))
+                .with_context(|| format!("Cannot enable charging at {amps}A"))?;
+            println!("Charging successfully enabled at {}A per phase.", amps);
+        }
+        commandline::Commands::Disable { force } => {
+            if !force {
+                eprintln!(
+                    "Warning: Disabling charging will cut power and stop the charging session!"
+                );
+                eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
+            client
+                .disable()
+                .with_context(|| "Cannot disable charging")?;
+            println!("Charging successfully disabled / halted.");
+        }
+        commandline::Commands::WakeUp => {
+            println!("Sending wake-up sequence to vehicle (cycling state E0 -> A1)...");
+            client
+                .wake_up()
+                .with_context(|| "Failed to execute wake-up sequence")?;
+            println!("Wake-up sequence completed.");
         }
     }
     Ok(())
 }
 
-fn handle_frame_commands(cmd: &commandline::FrameCommands) -> Result<()> {
-    match cmd {
-        commandline::FrameCommands::EncodeRead {
-            device_id,
-            start_register,
-            qty,
-        } => {
-            let reg = if start_register.starts_with("0x") || start_register.starts_with("0X") {
-                u16::from_str_radix(&start_register[2..], 16)?
-            } else {
-                start_register.parse::<u16>()?
-            };
-            let mut payload = Vec::new();
-            payload.extend_from_slice(&reg.to_be_bytes());
-            payload.extend_from_slice(&qty.to_be_bytes());
-            let frame = proto::encode_ascii_frame(*device_id, 0x03, &payload, ':');
-            print!("{frame}");
-        }
-        commandline::FrameCommands::EncodeWriteCurrent {
-            device_id,
-            amperes,
-        } => {
-            let current = proto::ChargingCurrent::new(*amperes)?;
-            let mut payload = Vec::new();
-            payload.extend_from_slice(&proto::ChargingCurrent::ADDRESS.to_be_bytes());
-            payload.extend_from_slice(&1u16.to_be_bytes());
-            payload.push(2);
-            payload.extend_from_slice(&current.encode_to_word().to_be_bytes());
-            let frame = proto::encode_ascii_frame(*device_id, 0x10, &payload, ':');
-            print!("{frame}");
-        }
-        commandline::FrameCommands::Decode { frame } => {
-            let (dev_id, fc, payload) = proto::decode_ascii_frame(frame)?;
-            println!("Decoded Frame:");
-            println!("  Device ID: {:#04X} ({})", dev_id, dev_id);
-            println!("  Function Code: {:#04X}", fc);
-            let hex_payload: Vec<String> = payload.iter().map(|b| format!("{:02X}", b)).collect();
-            println!("  Payload: {}", hex_payload.join(""));
-        }
-        commandline::FrameCommands::EncodeEvccRequest {
-            address,
-            command_code,
-            parameter,
-        } => {
-            let cmd = proto::EvccCommand::from_code(*command_code);
-            let param_opt = if parameter.is_empty() {
-                None
-            } else {
-                Some(parameter.as_str())
-            };
-            let line = proto::encode_evcc_request(*address, cmd, param_opt);
-            print!("{line}");
-        }
-        commandline::FrameCommands::DecodeEvccReply { line } => {
-            let (addr, cmd_code, param) = proto::parse_evcc_reply(line)?;
-            let cmd = proto::EvccCommand::from_code(cmd_code);
-            println!("Decoded EVCC Serial Reply:");
-            println!("  Module Address: {}", addr);
-            println!("  Command: {:02} ({})", cmd_code, cmd.name());
-            if let Some(p) = param {
-                println!("  Parameter: {}", p);
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_delay() {
+        assert_eq!(minimum_serial_delay(1200).as_millis(), 32);
+        assert_eq!(minimum_serial_delay(2400).as_millis(), 16);
+        assert_eq!(minimum_serial_delay(4800).as_millis(), 8);
+        assert_eq!(minimum_serial_delay(9600).as_millis(), 4);
+        assert_eq!(minimum_serial_delay(19200).as_millis(), 2);
+        assert_eq!(minimum_serial_delay(38400), Duration::from_micros(1_750));
+        assert_eq!(minimum_serial_delay(57600), Duration::from_micros(1_750));
+
+        // Fallback test
+        let low_delay = Duration::from_millis(1);
+        assert_eq!(
+            check_serial_delay(low_delay, 9600),
+            Duration::from_millis(4)
+        );
+
+        let good_delay = Duration::from_millis(50);
+        assert_eq!(
+            check_serial_delay(good_delay, 38400),
+            Duration::from_millis(50)
+        );
     }
-    Ok(())
 }
 
 fn main() -> Result<()> {
     let args = commandline::Args::parse();
-    let mut delay = args.delay;
     let _log_handle = logging_init(args.verbose.log_level_filter());
+    let mut delay = args.delay;
 
     match &args.connection {
-        commandline::Connection::Tcp {
-            address,
-            slave,
-            command,
-        } => {
-            let socket_addr = address
-                .parse()
-                .with_context(|| format!("Cannot parse address {address}"))?;
-            trace!("Open TCP address {socket_addr}");
-            let mut ctx = tokio_modbus::client::sync::tcp::connect_slave(
-                socket_addr,
-                tokio_modbus::Slave(*slave),
-            )
-            .with_context(|| format!("Cannot open {socket_addr:?}"))?;
-            ctx.set_timeout(args.timeout);
-            let mut client = SafeClient::new(ctx);
-            handle_commands(&mut client, command, &delay, args.no_json)?;
-        }
-        commandline::Connection::Rtu {
+        commandline::Connection::Serial {
             device,
             baud_rate,
             address,
             parity_and_stop_bit,
             command,
         } => {
-            trace!("Open RTU {device} address {address} baud rate {baud_rate}");
-            delay = check_rtu_delay(delay, *baud_rate);
+            trace!(
+                "Open serial {device} address {address} baud rate {baud_rate} parity and stop bits {parity_and_stop_bit:?}"
+            );
+            delay = check_serial_delay(delay, *baud_rate);
+
             let (parity, stop_bits) = match parity_and_stop_bit {
                 commandline::ParityAndStopBit::EvenParityOneStopBit => {
                     (tokio_serial::Parity::Even, tokio_serial::StopBits::One)
@@ -244,208 +366,28 @@ fn main() -> Result<()> {
                     (tokio_serial::Parity::None, tokio_serial::StopBits::Two)
                 }
             };
-            let builder = abl_evcc_lib::tokio_common::serial_port_builder(
-                device, *baud_rate, parity, stop_bits,
-            );
-            let mut ctx = tokio_modbus::client::sync::rtu::connect_slave(
-                &builder,
-                tokio_modbus::Slave(*address),
-            )
-            .with_context(|| format!("Cannot open device {device} baud rate {baud_rate}"))?;
-            ctx.set_timeout(args.timeout);
-            let mut client = SafeClient::new(ctx);
-            handle_commands(&mut client, command, &delay, args.no_json)?;
+
+            let mut client = AsciiClient::connect_serial(
+                device,
+                *baud_rate,
+                parity,
+                stop_bits,
+                *address,
+                args.timeout,
+                delay,
+            )?;
+            handle_commands(&mut client, command, delay, args.no_json)?;
         }
-        commandline::Connection::Frame { command } => {
-            handle_frame_commands(command)?;
-        }
-        commandline::Connection::Serial {
-            device,
-            tcp,
-            baud_rate,
+        commandline::Connection::Tcp {
             address,
+            slave,
             command,
         } => {
-            handle_serial_commands(device.as_deref(), tcp.as_deref(), *baud_rate, *address, command, args.timeout)?;
+            trace!("Open TCP {address} slave {slave}");
+            let mut client = AsciiClient::connect_tcp(address, *slave, args.timeout, delay)?;
+            handle_commands(&mut client, command, delay, args.no_json)?;
         }
     }
 
     Ok(())
-}
-
-fn handle_serial_commands(
-    device: Option<&str>,
-    tcp_addr: Option<&str>,
-    baud_rate: u32,
-    address: u8,
-    command: &commandline::EvccSerialCommands,
-    timeout: Duration,
-) -> Result<()> {
-    use std::io::{BufRead, BufReader, Write};
-
-    let (cmd, param_str) = match command {
-        commandline::EvccSerialCommands::Raw {
-            command_code,
-            parameter,
-        } => (proto::EvccCommand::from_code(*command_code), parameter.clone()),
-        commandline::EvccSerialCommands::GetFirmware => (proto::EvccCommand::GetFirmware, String::new()),
-        commandline::EvccSerialCommands::GetStatus => (proto::EvccCommand::GetStatus, String::new()),
-        commandline::EvccSerialCommands::GetInputs => (proto::EvccCommand::GetInputs, String::new()),
-        commandline::EvccSerialCommands::GetPresentPwm => (proto::EvccCommand::GetPresentPwm, String::new()),
-        commandline::EvccSerialCommands::SetPwm { parameter } => (proto::EvccCommand::SetPwm, parameter.clone()),
-        commandline::EvccSerialCommands::SetCurrent { amperes } => {
-            let param = if *amperes == 0 {
-                "0999".to_string()
-            } else {
-                match *amperes {
-                    6 => "0000".to_string(),
-                    10 => "0001".to_string(),
-                    13 => "0002".to_string(),
-                    16 => "0003".to_string(),
-                    20 => "0004".to_string(),
-                    30 => "0005".to_string(),
-                    32 => "0006".to_string(),
-                    63 => "0007".to_string(),
-                    70 => "0008".to_string(),
-                    80 => "0009".to_string(),
-                    other => {
-                        let pwm = if other <= 51 {
-                            (other as f32 / 0.06).round() as u16
-                        } else {
-                            ((other as f32 / 2.5 + 64.0) * 10.0).round() as u16
-                        };
-                        format!("{:04}", pwm.clamp(80, 970))
-                    }
-                }
-            };
-            (proto::EvccCommand::SetPwm, param)
-        }
-        commandline::EvccSerialCommands::EnablePwm => (proto::EvccCommand::EnablePwm, String::new()),
-        commandline::EvccSerialCommands::DisablePwm => (proto::EvccCommand::DisablePwm, String::new()),
-        commandline::EvccSerialCommands::GetDefaultPwm => (proto::EvccCommand::GetDefaultPwm, String::new()),
-        commandline::EvccSerialCommands::BreakCharge => (proto::EvccCommand::SetBreakCharge, String::new()),
-        commandline::EvccSerialCommands::ResumeCharge => (proto::EvccCommand::ClearBreakCharge, String::new()),
-        commandline::EvccSerialCommands::GetBreakCharge => (proto::EvccCommand::GetBreakCharge, String::new()),
-        commandline::EvccSerialCommands::SwitchToAPrime => (proto::EvccCommand::SwitchToAPrime, String::new()),
-        commandline::EvccSerialCommands::LeaveAPrime => (proto::EvccCommand::LeaveAPrime, String::new()),
-        commandline::EvccSerialCommands::Reset => (proto::EvccCommand::Reset, "1111".to_string()),
-    };
-
-    let param_opt = if param_str.is_empty() {
-        None
-    } else {
-        Some(param_str.as_str())
-    };
-
-    let req = proto::encode_evcc_request(address, cmd, param_opt);
-
-    // Communicate over either transparent TCP socket or serial RS485 port
-    let mut stream = match (device, tcp_addr) {
-        (Some(_), Some(_)) => anyhow::bail!("Cannot specify both --device and --tcp. Choose one transport."),
-        (None, None) => {
-            let default_dev = if cfg!(target_os = "windows") { "COM1" } else { "/dev/ttyUSB0" };
-            trace!("Defaulting to serial device {default_dev} at {baud_rate} 8N1");
-            let port = tokio_serial::new(default_dev, baud_rate)
-                .parity(tokio_serial::Parity::None)
-                .stop_bits(tokio_serial::StopBits::One)
-                .data_bits(tokio_serial::DataBits::Eight)
-                .timeout(timeout)
-                .open()
-                .with_context(|| format!("Cannot open serial device {default_dev}"))?;
-            Stream::Serial(port)
-        }
-        (Some(dev), None) => {
-            trace!("Opening serial device {dev} at {baud_rate} 8N1");
-            let port = tokio_serial::new(dev, baud_rate)
-                .parity(tokio_serial::Parity::None)
-                .stop_bits(tokio_serial::StopBits::One)
-                .data_bits(tokio_serial::DataBits::Eight)
-                .timeout(timeout)
-                .open()
-                .with_context(|| format!("Cannot open serial device {dev}"))?;
-            Stream::Serial(port)
-        }
-        (None, Some(tcp)) => {
-            trace!("Connecting to transparent TCP bridge {tcp}");
-            let socket_addr: std::net::SocketAddr = tcp
-                .parse()
-                .with_context(|| format!("Cannot parse TCP address: {tcp}"))?;
-            let tcp_stream = std::net::TcpStream::connect_timeout(&socket_addr, timeout)
-                .with_context(|| format!("Cannot connect to TCP endpoint {tcp}"))?;
-            tcp_stream.set_read_timeout(Some(timeout))?;
-            tcp_stream.set_write_timeout(Some(timeout))?;
-            Stream::Tcp(tcp_stream)
-        }
-    };
-
-    trace!("Sending: {:?}", req);
-    stream.write_all(req.as_bytes())
-        .with_context(|| "Failed to write request to EVCC controller")?;
-    stream.flush().with_context(|| "Failed to flush stream")?;
-
-    let mut reader = BufReader::new(stream);
-    let mut reply = String::new();
-    reader
-        .read_line(&mut reply)
-        .with_context(|| "Failed to read reply from EVCC controller")?;
-
-    trace!("Received: {:?}", reply);
-    let (res_addr, res_cmd, param) = proto::parse_evcc_reply(&reply)?;
-    let parsed_cmd = proto::EvccCommand::from_code(res_cmd);
-    println!("Reply from EVCC module {}:", res_addr);
-    println!("  Command: {:02} ({})", res_cmd, parsed_cmd.name());
-    if let Some(p) = param {
-        println!("  Value: {}", p);
-        if res_cmd == 2 {
-            // Status code explanations
-            let desc = match p.trim() {
-                "0000" => "State A (Standby / No EV connected)",
-                "0004" => "State B2 (EV connected, charge enabled, waiting for EV)",
-                "0005" => "State C (Charging active)",
-                "0006" => "State D (Charging with ventilation)",
-                "0009" => "State B' (Charging stopped by EV)",
-                "0013" => "State B1 (EV connected, charge suspended/not enabled)",
-                "0017" => "State A' (CP off / Wake-up state)",
-                "0033" => "Error CS (Cable resistance out of range)",
-                "0035" => "Error EV (Vehicle diode fault)",
-                "0037" => "Error lock (Socket locking failed)",
-                "0039" => "Error ventilation",
-                "0255" => "State MANUAL",
-                _ => "Unknown state code",
-            };
-            println!("  Interpretation: {}", desc);
-        }
-    }
-
-    Ok(())
-}
-
-enum Stream {
-    Serial(Box<dyn tokio_serial::SerialPort>),
-    Tcp(std::net::TcpStream),
-}
-
-impl std::io::Read for Stream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            Self::Serial(s) => s.read(buf),
-            Self::Tcp(t) => t.read(buf),
-        }
-    }
-}
-
-impl std::io::Write for Stream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            Self::Serial(s) => s.write(buf),
-            Self::Tcp(t) => t.write(buf),
-        }
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        match self {
-            Self::Serial(s) => s.flush(),
-            Self::Tcp(t) => t.flush(),
-        }
-    }
 }
