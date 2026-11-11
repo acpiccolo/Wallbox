@@ -23,7 +23,7 @@ fn default_max_current() -> u16 {
     1
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "bin-dependencies"))]
 mod mqtt_config_tests {
     use super::*;
 

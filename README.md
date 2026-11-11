@@ -9,6 +9,8 @@ This repository contains a Rust library and command-line tool for interacting wi
 - [Connection Methods (`serial` vs `tcp`)](#connection-methods-serial-vs-tcp)
 - [Available CLI Commands](#available-cli-commands)
 - [Daemon Mode & MQTT (Bidirectional Control)](#daemon-mode--mqtt-bidirectional-control)
+- [Library Usage](#library-usage)
+- [Cargo Features](#cargo-features)
 - [Technical Documentation](#technical-documentation)
 - [License](#license)
 
@@ -197,6 +199,71 @@ When `allow_control: true` is set in `mqtt.yaml` (default: `false`), the daemon 
 
 #### MQTT `max_current` Safety Limit:
 In `mqtt.yaml`, `max_current` (default: `1`) defines the **maximum charging current in Amperes per phase** that can be requested via MQTT. Any incoming current or power command exceeding this limit is automatically capped, and when enabling charging via MQTT, `max_current` is used as the target current.
+
+---
+
+## Library Usage
+
+The `abl_evcc_lib` crate provides two main ways to interact with the ABL eMH1 energy/charge controllers:
+
+1. **High-Level, Safe Clients**: Stateful, thread-safe clients that are easy to share and use in concurrent applications. This is the recommended approach for most users. See `tokio_sync_safe_client::SafeClient` (blocking) and `tokio_async_safe_client::SafeClient` (`async`).
+
+2. **Low-Level, Stateless Functions**: A set of stateless functions that directly map to the device's Modbus commands. This API offers maximum flexibility but requires manual management of the Modbus context. See the `tokio_sync` and `tokio_async` modules.
+
+### Quick Start: Synchronous Safe Client
+
+```rust
+use abl_evcc_lib::{
+    ascii_client::AsciiClient,
+    tokio_sync_safe_client::SafeClient,
+};
+use std::time::Duration;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Connect directly to a transparent TCP serial server (e.g. Elfin EW11)
+    let ascii_client = AsciiClient::connect_tcp("192.168.3.128:8899", 1, Duration::from_secs(3), Duration::from_millis(100))?;
+    let mut client = SafeClient::new(ascii_client);
+
+    // Read full measurements (status, 3-phase currents, active power, current limit)
+    let measurements = client.read_measurements()?;
+    println!("Successfully read measurements:\n{}", measurements);
+
+    // Set maximum charging current to 16A per phase
+    client.set_current(16)?;
+
+    Ok(())
+}
+```
+
+### Quick Start: Asynchronous Safe Client
+
+```rust
+use abl_evcc_lib::tokio_async_safe_client::SafeClient;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = SafeClient::connect("192.168.3.128:8899", 1, Duration::from_millis(100)).await?;
+
+    let measurements = client.read_measurements().await?;
+    println!("Async read status: {:?}", measurements.status);
+
+    Ok(())
+}
+```
+
+---
+
+## Cargo Features
+
+This crate uses a feature-based system to minimize dependencies:
+
+- **`default`**: Enables `bin-dependencies` for compiling the `abl-evcc` CLI tool.
+- **`safe-client-sync`**: Thread-safe synchronous wrapper [`tokio_sync_safe_client::SafeClient`].
+- **`safe-client-async`**: Thread-safe asynchronous wrapper [`tokio_async_safe_client::SafeClient`].
+- **`tokio-sync`**: Stateless synchronous functions [`tokio_sync::Evcc2`].
+- **`tokio-async`**: Stateless asynchronous functions [`tokio_async::Evcc2Async`].
+- **`serde`**: Implements serialization/deserialization for protocol data types.
 
 ---
 
